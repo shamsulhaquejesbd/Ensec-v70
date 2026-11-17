@@ -42,8 +42,11 @@ import {
 } from './src/lib/overtimePermissions.ts';
 import {
   DEFAULT_SYSTEM_SETTINGS,
+  SYSTEM_SETTINGS_TABLE_SQL,
   SystemBrandingConfig,
   SystemSettingsConfig,
+  SystemSettingsDbStatus,
+  cleanBrandingLogoDataUrl,
   isValidBrandingLogoDataUrl,
   normalizeSystemSettings,
 } from './src/types/systemSettings.ts';
@@ -2261,7 +2264,101 @@ export function createAppServer() {
       branding: { ...DEFAULT_SYSTEM_SETTINGS.branding },
     };
 
-  const hydrateSystemSettingsFromSupabase = async (): Promise<SystemSettingsConfig> => {
+  const classifySystemSettingsDbError = (err: any): SystemSettingsDbStatus => {
+    const code = String(err?.code || '').trim();
+    const message = String(err?.message || '').trim();
+    const lower = message.toLowerCase();
+
+    if (
+      code === 'PGRST205' ||
+      code === '42P01' ||
+      lower.includes('could not find the table') ||
+      lower.includes('does not exist')
+    ) {
+      return {
+        synced: false,
+        status: 'table_missing',
+        error: 'Supabase table "public.system_settings" does not exist yet.',
+        sqlFix: SYSTEM_SETTINGS_TABLE_SQL,
+      };
+    }
+
+    if (
+      code === '42501' ||
+      lower.includes('row-level security') ||
+      lower.includes('permission denied')
+    ) {
+      return {
+        synced: false,
+        status: 'rls_blocked',
+        error: `Supabase Row-Level Security blocked access to "public.system_settings": ${message}`,
+        sqlFix: SYSTEM_SETTINGS_TABLE_SQL,
+      };
+    }
+
+    return {
+      synced: false,
+      status: 'error',
+      error: message || 'Failed to communicate with Supabase system_settings table.',
+      sqlFix: SYSTEM_SETTINGS_TABLE_SQL,
+    };
+  };
+
+  let lastSystemSettingsDbStatus: SystemSettingsDbStatus = serverSupabase
+    ? { synced: false, status: 'unknown', error: null, sqlFix: null }
+    : {
+        synced: false,
+        status: 'not_configured',
+        error: 'Supabase server client is not configured.',
+        sqlFix: null,
+      };
+
+  const upsertSystemSettingsToSupabase = async (
+    settings: SystemSettingsConfig
+  ): Promise<SystemSettingsDbStatus> => {
+    if (!serverSupabase) {
+      lastSystemSettingsDbStatus = {
+        synced: false,
+        status: 'not_configured',
+        error: 'Supabase server client is not configured.',
+        sqlFix: null,
+      };
+      return lastSystemSettingsDbStatus;
+    }
+
+    try {
+      const { error } = await serverSupabase.from('system_settings').upsert(
+        {
+          id: 'default',
+          software_name: settings.branding.softwareName,
+          logo_data_url: settings.branding.logoDataUrl,
+          branding_json: settings.branding,
+          settings_json: { branding: settings.branding },
+          updated_by: settings.updatedBy || settings.branding.updatedBy || null,
+          updated_at: settings.updatedAt || settings.branding.updatedAt || new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      );
+
+      if (error) {
+        console.error('[SystemSettings] Supabase upsert error:', error);
+        lastSystemSettingsDbStatus = classifySystemSettingsDbError(error);
+        return lastSystemSettingsDbStatus;
+      }
+
+      lastSystemSettingsDbStatus = { synced: true, status: 'synced', error: null, sqlFix: null };
+      return lastSystemSettingsDbStatus;
+    } catch (err: any) {
+      console.error('[SystemSettings] Supabase upsert exception:', err);
+      lastSystemSettingsDbStatus = classifySystemSettingsDbError(err);
+      return lastSystemSettingsDbStatus;
+    }
+  };
+
+  const hydrateSystemSettingsFromSupabase = async (): Promise<{
+    settings: SystemSettingsConfig;
+    dbStatus: SystemSettingsDbStatus;
+  }> => {
     const diskSnapshot = readSystemSettingsFromDisk();
     if (diskSnapshot) {
       systemSettingsCache = diskSnapshot;
@@ -2273,7 +2370,15 @@ export function createAppServer() {
           .select('*')
           .eq('id', 'default')
           .maybeSingle();
-        if (!error && data) {
+
+        if (error) {
+          lastSystemSettingsDbStatus = classifySystemSettingsDbError(error);
+          return { settings: systemSettingsCache, dbStatus: lastSystemSettingsDbStatus };
+        }
+
+        lastSystemSettingsDbStatus = { synced: true, status: 'synced', error: null, sqlFix: null };
+
+        if (data) {
           const remoteRaw: Partial<SystemSettingsConfig> = {
             id: String(data.id || 'default'),
             updatedAt: data.updated_at || null,
@@ -2282,9 +2387,7 @@ export function createAppServer() {
               ...(typeof data.branding_json === 'object' && data.branding_json ? data.branding_json : {}),
               softwareName: data.software_name || data.branding_json?.softwareName,
               logoDataUrl:
-                data.logo_data_url !== undefined
-                  ? data.logo_data_url
-                  : data.branding_json?.logoDataUrl ?? null,
+                data.logo_data_url || data.branding_json?.logoDataUrl || null,
               updatedAt: data.updated_at || data.branding_json?.updatedAt || null,
               updatedBy: data.updated_by || data.branding_json?.updatedBy || null,
             },
@@ -2292,27 +2395,34 @@ export function createAppServer() {
           const normalizedRemote = normalizeSystemSettings(remoteRaw);
           const remoteTime = normalizedRemote.updatedAt ? Date.parse(normalizedRemote.updatedAt) : 0;
           const localTime = systemSettingsCache.updatedAt ? Date.parse(systemSettingsCache.updatedAt) : 0;
+          const remoteIsUneditedSeed = !data.updated_by && !normalizedRemote.branding.logoDataUrl && normalizedRemote.branding.softwareName === 'Ensec';
+          const diskHasAdminEdits = Boolean(diskSnapshot?.updatedBy);
 
-          if (!diskSnapshot || (remoteTime > 0 && remoteTime >= localTime)) {
+          if (remoteIsUneditedSeed && diskHasAdminEdits && diskSnapshot) {
+            // Migrate saved server settings into freshly created Supabase table instead of overwriting with default seed
+            lastSystemSettingsDbStatus = await upsertSystemSettingsToSupabase(diskSnapshot);
+          } else if (!diskSnapshot || (remoteTime > 0 && remoteTime >= localTime)) {
             systemSettingsCache = normalizedRemote;
             writeSystemSettingsToDisk(systemSettingsCache);
           }
+        } else if (diskSnapshot?.updatedBy) {
+          lastSystemSettingsDbStatus = await upsertSystemSettingsToSupabase(diskSnapshot);
         }
-      } catch {
-        // Table not migrated yet or offline — disk/memory store remains authoritative
+      } catch (err: any) {
+        lastSystemSettingsDbStatus = classifySystemSettingsDbError(err);
       }
     }
-    return systemSettingsCache;
+    return { settings: systemSettingsCache, dbStatus: lastSystemSettingsDbStatus };
   };
 
   app.get('/api/system-settings', async (_req, res) => {
-    const settings = await hydrateSystemSettingsFromSupabase();
-    res.json({ settings });
+    const { settings, dbStatus } = await hydrateSystemSettingsFromSupabase();
+    res.json({ settings, dbStatus });
   });
 
   app.get('/api/system-settings/branding', async (_req, res) => {
-    const settings = await hydrateSystemSettingsFromSupabase();
-    res.json({ branding: settings.branding, settings });
+    const { settings, dbStatus } = await hydrateSystemSettingsFromSupabase();
+    res.json({ branding: settings.branding, settings, dbStatus });
   });
 
   const handleUpdateSystemBranding = async (req: express.Request, res: express.Response) => {
@@ -2347,12 +2457,13 @@ export function createAppServer() {
       nextLogoFileName = null;
       nextLogoMimeType = null;
     } else if (body.logoDataUrl !== undefined) {
-      if (!isValidBrandingLogoDataUrl(body.logoDataUrl)) {
+      const cleanedLogo = cleanBrandingLogoDataUrl(body.logoDataUrl);
+      if (!cleanedLogo || !isValidBrandingLogoDataUrl(cleanedLogo)) {
         return res.status(400).json({
           error: 'Invalid logo format or file exceeds size limit (max 3 MB PNG/JPG/WEBP/SVG/ICO).',
         });
       }
-      nextLogoDataUrl = body.logoDataUrl.trim();
+      nextLogoDataUrl = cleanedLogo;
       nextLogoFileName =
         typeof body.logoFileName === 'string' && body.logoFileName.trim()
           ? body.logoFileName.trim().slice(0, 160)
@@ -2385,24 +2496,9 @@ export function createAppServer() {
     systemSettingsCache = updatedSettings;
     writeSystemSettingsToDisk(updatedSettings);
 
-    if (serverSupabase) {
-      try {
-        await serverSupabase.from('system_settings').upsert(
-          {
-            id: 'default',
-            software_name: updatedBranding.softwareName,
-            logo_data_url: updatedBranding.logoDataUrl,
-            branding_json: updatedBranding,
-            settings_json: { branding: updatedBranding },
-            updated_by: actorName,
-            updated_at: nowIso,
-          },
-          { onConflict: 'id' }
-        );
-      } catch {
-        // Non-fatal if SQL migration not run yet; disk persistence remains active
-      }
+    const dbStatus = await upsertSystemSettingsToSupabase(updatedSettings);
 
+    if (serverSupabase) {
       try {
         await serverSupabase.from('audit_logs').insert({
           user_id: String(caller.userId || caller.id || 'ADMIN'),
@@ -2422,11 +2518,40 @@ export function createAppServer() {
       ok: true,
       branding: updatedBranding,
       settings: updatedSettings,
+      dbSynced: dbStatus.synced,
+      dbStatus,
     });
   };
 
   app.put('/api/system-settings/branding', handleUpdateSystemBranding);
   app.post('/api/system-settings/branding', handleUpdateSystemBranding);
+
+  app.post('/api/system-settings/sync', async (req, res) => {
+    const caller = await resolveRequestUser(req);
+    if (!caller) {
+      return res.status(401).json({
+        error: 'Authentication required to sync System Branding.',
+      });
+    }
+    if (!canModifySystemBranding(caller)) {
+      return res.status(403).json({
+        error: 'Forbidden: Only authorized Admin users can sync System Branding.',
+      });
+    }
+
+    const diskSnapshot = readSystemSettingsFromDisk();
+    if (diskSnapshot) {
+      systemSettingsCache = diskSnapshot;
+    }
+    const dbStatus = await upsertSystemSettingsToSupabase(systemSettingsCache);
+    return res.status(200).json({
+      ok: dbStatus.synced,
+      dbSynced: dbStatus.synced,
+      dbStatus,
+      settings: systemSettingsCache,
+      branding: systemSettingsCache.branding,
+    });
+  });
 
   return app;
 }

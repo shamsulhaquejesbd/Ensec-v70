@@ -119,6 +119,40 @@ export interface EmployeeSalaryStructure {
   }>;
 }
 
+export interface SalaryStructuresDbStatus {
+  synced: boolean;
+  status: 'synced' | 'rls_blocked' | 'table_missing' | 'error' | 'not_configured' | 'unknown';
+  error?: string | null;
+  sqlFix?: string | null;
+}
+
+export const SALARY_STRUCTURES_TABLE_SQL = `-- Run this in your Supabase SQL Editor to enable saving Employee Salary Structures:
+CREATE TABLE IF NOT EXISTS public.employee_salary_structures (
+  id TEXT PRIMARY KEY,
+  employee_id TEXT NOT NULL,
+  employee_code TEXT NOT NULL,
+  employee_name TEXT NOT NULL,
+  basic_salary_bdt NUMERIC(14, 2) NOT NULL DEFAULT 30000.00,
+  house_rent_bdt NUMERIC(14, 2) NOT NULL DEFAULT 15000.00,
+  medical_allowance_bdt NUMERIC(14, 2) NOT NULL DEFAULT 3000.00,
+  conveyance_allowance_bdt NUMERIC(14, 2) NOT NULL DEFAULT 4000.00,
+  mobile_allowance_bdt NUMERIC(14, 2) NOT NULL DEFAULT 2000.00,
+  special_allowance_bdt NUMERIC(14, 2) DEFAULT 0.00,
+  other_allowances_bdt NUMERIC(14, 2) DEFAULT 0.00,
+  gross_salary_bdt NUMERIC(14, 2) NOT NULL DEFAULT 54000.00,
+  effective_from DATE NOT NULL DEFAULT CURRENT_DATE,
+  history_json JSONB DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.employee_salary_structures ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public all employee_salary_structures" ON public.employee_salary_structures;
+CREATE POLICY "Allow public all employee_salary_structures" ON public.employee_salary_structures FOR ALL USING (true) WITH CHECK (true);
+
+GRANT ALL ON public.employee_salary_structures TO postgres, anon, authenticated, service_role;`;
+
 // --------------------------------------------------------------------------
 // 1B. Office Locations (GPS Geofencing Setup)
 // --------------------------------------------------------------------------

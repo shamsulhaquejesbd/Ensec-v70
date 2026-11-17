@@ -3254,6 +3254,11 @@ CREATE INDEX IF NOT EXISTS idx_emp_bns_month ON public.employee_bonuses(month_ye
 CREATE INDEX IF NOT EXISTS idx_monthly_pay_month ON public.monthly_payroll_runs(month_year);
 CREATE INDEX IF NOT EXISTS idx_sal_pay_run ON public.salary_payments(payroll_run_id);
 
+-- Row Level Security Policies
+ALTER TABLE public.employee_salary_structures ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow public all employee_salary_structures" ON public.employee_salary_structures;
+CREATE POLICY "Allow public all employee_salary_structures" ON public.employee_salary_structures FOR ALL USING (true) WITH CHECK (true);
+
 -- Grants
 GRANT ALL ON public.employee_salary_structures TO postgres, anon, authenticated, service_role;
 GRANT ALL ON public.employee_attendances TO postgres, anon, authenticated, service_role;

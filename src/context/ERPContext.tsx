@@ -214,6 +214,8 @@ import {
   AdvanceLoanType,
   BonusType,
   SalaryPaymentMethod,
+  SalaryStructuresDbStatus,
+  SALARY_STRUCTURES_TABLE_SQL,
 } from '../types/payroll.ts';
 import {
   DEFAULT_OFFICE_LOCATIONS,
@@ -239,6 +241,8 @@ import {
 import {
   supabase,
   getSupabase,
+  getSupabaseUrl,
+  DEFAULT_SUPABASE_URL,
   checkSupabaseConfigured,
   isSupabaseConfigured,
 } from '../lib/supabase.ts';
@@ -264,8 +268,10 @@ import {
 } from '../mock/overtimeData.ts';
 import {
   DEFAULT_SYSTEM_SETTINGS,
+  SYSTEM_SETTINGS_TABLE_SQL,
   SystemBrandingConfig,
   SystemSettingsConfig,
+  SystemSettingsDbStatus,
   formatDocumentTitle,
   normalizeSystemSettings,
 } from '../types/systemSettings.ts';
@@ -276,6 +282,7 @@ interface ERPContextType {
   toggleTheme: () => void;
   systemSettings: SystemSettingsConfig;
   systemBranding: SystemBrandingConfig;
+  systemSettingsDbStatus: SystemSettingsDbStatus;
   isSystemSettingsLoaded: boolean;
   refreshSystemSettings: () => Promise<void>;
   updateSystemBranding: (payload: {
@@ -283,7 +290,19 @@ interface ERPContextType {
     logoDataUrl: string | null;
     logoFileName?: string | null;
     logoMimeType?: string | null;
-  }) => Promise<{ success: boolean; error?: string; branding?: SystemBrandingConfig }>;
+  }) => Promise<{
+    success: boolean;
+    error?: string;
+    branding?: SystemBrandingConfig;
+    dbSynced?: boolean;
+    dbStatus?: SystemSettingsDbStatus;
+  }>;
+  syncSystemSettingsToDatabase: () => Promise<{
+    success: boolean;
+    dbSynced: boolean;
+    dbStatus?: SystemSettingsDbStatus;
+    error?: string;
+  }>;
   currentUser: User;
   setCurrentUser: (user: User) => void;
   isAuthenticated: boolean;
@@ -702,8 +721,32 @@ interface ERPContextType {
   disbursePayroll: (payrollId: string) => void;
 
   salaryStructures: EmployeeSalaryStructure[];
-  addSalaryStructure: (structure: any) => string;
-  updateSalaryStructure: (id: string, updates: Partial<EmployeeSalaryStructure>, reason?: string) => void;
+  salaryStructuresDbStatus: SalaryStructuresDbStatus;
+  refreshSalaryStructures: () => Promise<void>;
+  syncSalaryStructuresToSupabase: () => Promise<{
+    success: boolean;
+    syncedCount: number;
+    error?: string;
+    sqlFix?: string;
+  }>;
+  addSalaryStructure: (structure: any) => Promise<{
+    success: boolean;
+    id: string;
+    dbSynced: boolean;
+    error?: string;
+    sqlFix?: string;
+  }>;
+  updateSalaryStructure: (
+    id: string,
+    updates: Partial<EmployeeSalaryStructure>,
+    reason?: string
+  ) => Promise<{
+    success: boolean;
+    id: string;
+    dbSynced: boolean;
+    error?: string;
+    sqlFix?: string;
+  }>;
   getEmployeeSalaryStructure: (fieldForceId: string) => EmployeeSalaryStructure | undefined;
 
   officeLocations: OfficeLocation[];
@@ -962,29 +1005,126 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return DEFAULT_SYSTEM_SETTINGS;
   });
   const [isSystemSettingsLoaded, setIsSystemSettingsLoaded] = useState<boolean>(false);
+  const [systemSettingsDbStatus, setSystemSettingsDbStatus] = useState<SystemSettingsDbStatus>({
+    synced: false,
+    status: 'unknown',
+    error: null,
+    sqlFix: null,
+  });
 
   const systemBranding = systemSettings.branding;
 
+  const classifyClientSupabaseSettingsError = useCallback((err: any): SystemSettingsDbStatus => {
+    const code = String(err?.code || '').trim();
+    const message = String(err?.message || '').trim();
+    const lower = message.toLowerCase();
+    if (
+      code === 'PGRST205' ||
+      code === '42P01' ||
+      lower.includes('could not find the table') ||
+      lower.includes('does not exist')
+    ) {
+      return {
+        synced: false,
+        status: 'table_missing',
+        error: 'Supabase table "public.system_settings" does not exist yet.',
+        sqlFix: SYSTEM_SETTINGS_TABLE_SQL,
+      };
+    }
+    if (
+      code === '42501' ||
+      lower.includes('row-level security') ||
+      lower.includes('permission denied')
+    ) {
+      return {
+        synced: false,
+        status: 'rls_blocked',
+        error: `Supabase Row-Level Security blocked access to "public.system_settings": ${message}`,
+        sqlFix: SYSTEM_SETTINGS_TABLE_SQL,
+      };
+    }
+    return {
+      synced: false,
+      status: 'error',
+      error: message || 'Failed to sync with Supabase system_settings table.',
+      sqlFix: SYSTEM_SETTINGS_TABLE_SQL,
+    };
+  }, []);
+
   const refreshSystemSettings = useCallback(async () => {
     if (typeof window === 'undefined') return;
+    let resolvedSettings: SystemSettingsConfig | null = null;
+    let resolvedDbStatus: SystemSettingsDbStatus | null = null;
+
     try {
       const resp = await fetch('/api/system-settings', { cache: 'no-store' });
       if (resp.ok) {
         const data = await resp.json();
         if (data?.settings) {
-          const normalized = normalizeSystemSettings(data.settings);
-          setSystemSettings(normalized);
+          resolvedSettings = normalizeSystemSettings(data.settings);
+          setSystemSettings(resolvedSettings);
           try {
-            localStorage.setItem(SYSTEM_SETTINGS_CACHE_KEY, JSON.stringify(normalized));
+            localStorage.setItem(SYSTEM_SETTINGS_CACHE_KEY, JSON.stringify(resolvedSettings));
           } catch {}
+        }
+        if (data?.dbStatus) {
+          resolvedDbStatus = data.dbStatus;
+          setSystemSettingsDbStatus(data.dbStatus);
         }
       }
     } catch {
       // Keep cached/default branding if backend is momentarily unreachable
+    }
+
+    // If a custom Supabase URL is configured in browser localStorage, hydrate/check directly from it as well
+    try {
+      const client = getSupabase();
+      const usingCustomSupabase = getSupabaseUrl() !== DEFAULT_SUPABASE_URL;
+      if (client && usingCustomSupabase) {
+        const { data: row, error } = await client
+          .from('system_settings')
+          .select('*')
+          .eq('id', 'default')
+          .maybeSingle();
+
+        if (error) {
+          resolvedDbStatus = classifyClientSupabaseSettingsError(error);
+          setSystemSettingsDbStatus(resolvedDbStatus);
+        } else {
+          resolvedDbStatus = { synced: true, status: 'synced', error: null, sqlFix: null };
+          setSystemSettingsDbStatus(resolvedDbStatus);
+          if (row) {
+            const remoteNormalized = normalizeSystemSettings({
+              id: String(row.id || 'default'),
+              updatedAt: row.updated_at || null,
+              updatedBy: row.updated_by || null,
+              branding: {
+                ...(typeof row.branding_json === 'object' && row.branding_json ? row.branding_json : {}),
+                softwareName: row.software_name || row.branding_json?.softwareName,
+                logoDataUrl: row.logo_data_url || row.branding_json?.logoDataUrl || null,
+                updatedAt: row.updated_at || row.branding_json?.updatedAt || null,
+                updatedBy: row.updated_by || row.branding_json?.updatedBy || null,
+              },
+            });
+            const hasMeaningfulRemote =
+              Boolean(row.updated_by) ||
+              Boolean(remoteNormalized.branding.logoDataUrl) ||
+              remoteNormalized.branding.softwareName !== 'Ensec';
+            if (hasMeaningfulRemote || !resolvedSettings) {
+              setSystemSettings(remoteNormalized);
+              try {
+                localStorage.setItem(SYSTEM_SETTINGS_CACHE_KEY, JSON.stringify(remoteNormalized));
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore secondary custom Supabase check error
     } finally {
       setIsSystemSettingsLoaded(true);
     }
-  }, []);
+  }, [classifyClientSupabaseSettingsError]);
 
   useEffect(() => {
     refreshSystemSettings();
@@ -2224,6 +2364,13 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (e) {}
     }
     return INITIAL_SALARY_STRUCTURES;
+  });
+
+  const [salaryStructuresDbStatus, setSalaryStructuresDbStatus] = useState<SalaryStructuresDbStatus>({
+    synced: false,
+    status: 'unknown',
+    error: null,
+    sqlFix: null,
   });
 
   const [officeLocations, setOfficeLocations] = useState<OfficeLocation[]>(() => {
@@ -4284,6 +4431,138 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const classifySalaryStructuresSupabaseError = (error: any): SalaryStructuresDbStatus => {
+    const code = String(error?.code || '').trim();
+    const message = String(error?.message || '').trim();
+    const lower = message.toLowerCase();
+    if (
+      code === 'PGRST205' ||
+      code === '42P01' ||
+      lower.includes('could not find the table') ||
+      lower.includes('does not exist')
+    ) {
+      return {
+        synced: false,
+        status: 'table_missing',
+        error: 'Supabase table "public.employee_salary_structures" does not exist yet.',
+        sqlFix: SALARY_STRUCTURES_TABLE_SQL,
+      };
+    }
+    if (
+      code === '42501' ||
+      lower.includes('row-level security') ||
+      lower.includes('permission denied')
+    ) {
+      return {
+        synced: false,
+        status: 'rls_blocked',
+        error: `Supabase Row-Level Security blocked saving to "public.employee_salary_structures": ${message}`,
+        sqlFix: SALARY_STRUCTURES_TABLE_SQL,
+      };
+    }
+    return {
+      synced: false,
+      status: 'error',
+      error: message || 'Failed to communicate with Supabase employee_salary_structures table.',
+      sqlFix: SALARY_STRUCTURES_TABLE_SQL,
+    };
+  };
+
+  const refreshSalaryStructures = async () => {
+    const sb = getSupabase();
+    if (!sb) {
+      setSalaryStructuresDbStatus({
+        synced: false,
+        status: 'not_configured',
+        error: 'Supabase client is not configured.',
+        sqlFix: null,
+      });
+      return;
+    }
+    try {
+      const { data, error } = await sb
+        .from('employee_salary_structures')
+        .select('*')
+        .order('updated_at', { ascending: false });
+
+      if (error) {
+        setSalaryStructuresDbStatus(classifySalaryStructuresSupabaseError(error));
+        return;
+      }
+
+      if (Array.isArray(data)) {
+        const mappedByEmp = new Map<string, EmployeeSalaryStructure>();
+        for (const row of data) {
+          const empId = String(row.employee_id || '');
+          if (!empId) continue;
+          const matchedRep = fieldForceReps.find(
+            (r) => r.id === empId || (row.employee_code && r.code === row.employee_code)
+          );
+          const basic = Number(row.basic_salary_bdt) || 0;
+          const house = Number(row.house_rent_bdt) || 0;
+          const med = Number(row.medical_allowance_bdt) || 0;
+          const conv = Number(row.conveyance_allowance_bdt) || 0;
+          const mob = Number(row.mobile_allowance_bdt) || 0;
+          const spec = Number(row.special_allowance_bdt) || 0;
+          const other = Number(row.other_allowances_bdt) || 0;
+          const gross =
+            row.gross_salary_bdt !== null && row.gross_salary_bdt !== undefined
+              ? Number(row.gross_salary_bdt)
+              : basic + house + med + conv + mob + spec + other;
+
+          const item: EmployeeSalaryStructure = {
+            id: String(row.id),
+            employeeId: empId,
+            fieldForceId: empId,
+            employeeCode: row.employee_code || matchedRep?.code || '',
+            employeeName: row.employee_name || matchedRep?.name || 'Employee',
+            designation: matchedRep?.designation || 'Staff',
+            department: matchedRep?.department || 'Operations',
+            employeeCategory: matchedRep?.employeeCategory as any,
+            effectiveFrom: row.effective_from ? String(row.effective_from).slice(0, 10) : new Date().toISOString().slice(0, 10),
+            basicSalaryBDT: basic,
+            houseRentBDT: house,
+            medicalAllowanceBDT: med,
+            conveyanceAllowanceBDT: conv,
+            mobileAllowanceBDT: mob,
+            specialAllowanceBDT: spec,
+            otherAllowancesBDT: other,
+            grossSalaryBDT: gross,
+            history: Array.isArray(row.history_json) ? row.history_json : [],
+            createdAt: row.created_at ? String(row.created_at).slice(0, 10) : undefined,
+            updatedAt: row.updated_at ? String(row.updated_at).slice(0, 10) : undefined,
+          };
+
+          if (!mappedByEmp.has(empId)) {
+            mappedByEmp.set(empId, item);
+          }
+        }
+
+        const remoteList = Array.from(mappedByEmp.values());
+        if (remoteList.length > 0) {
+          setSalaryStructures((prev) => {
+            const merged = [...remoteList];
+            const remoteEmpIds = new Set(remoteList.map((r) => r.employeeId || r.fieldForceId));
+            prev.forEach((p) => {
+              const pKey = p.employeeId || p.fieldForceId;
+              if (pKey && !remoteEmpIds.has(pKey) && !String(p.id).startsWith('str-ff-')) {
+                merged.push(p);
+              }
+            });
+            return merged;
+          });
+        }
+        setSalaryStructuresDbStatus((prev) =>
+          prev.status === 'rls_blocked' || prev.status === 'table_missing'
+            ? prev
+            : { synced: true, status: 'synced', error: null, sqlFix: null }
+        );
+      }
+    } catch (err: any) {
+      setSalaryStructuresDbStatus(classifySalaryStructuresSupabaseError(err));
+    }
+  };
+
   const refreshAttendanceData = async () => {
     const sb = getSupabase();
     if (sb) {
@@ -6261,6 +6540,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       refreshBanks(),
       refreshUOMs(),
       refreshFieldForce(),
+      refreshSalaryStructures(),
       refreshOfficeLocations(),
       refreshAttendanceData(),
       refreshOvertimeData(),
@@ -18938,60 +19218,335 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // CENTRAL PAYROLL MANAGEMENT FUNCTIONS
   // ==========================================
 
-  const addSalaryStructure = (structure: Omit<EmployeeSalaryStructure, 'id' | 'createdAt' | 'updatedAt'>): string => {
-    const id = `sal-str-${Date.now().toString().slice(-6)}`;
+  const persistSalaryStructureToSupabase = async (
+    record: EmployeeSalaryStructure
+  ): Promise<{
+    dbSynced: boolean;
+    error?: string;
+    sqlFix?: string;
+    dbStatus: SalaryStructuresDbStatus;
+  }> => {
+    const sb = getSupabase();
+    if (!sb) {
+      const notConfigured: SalaryStructuresDbStatus = {
+        synced: false,
+        status: 'not_configured',
+        error: 'Supabase client is not configured.',
+        sqlFix: null,
+      };
+      setSalaryStructuresDbStatus(notConfigured);
+      return { dbSynced: false, error: notConfigured.error || undefined, dbStatus: notConfigured };
+    }
+
+    const matchedRep = fieldForceReps.find(
+      (r) =>
+        r.id === record.employeeId ||
+        r.id === record.fieldForceId ||
+        (record.employeeCode && r.code === record.employeeCode)
+    );
+
+    const effectiveEmployeeId = String(record.employeeId || record.fieldForceId || matchedRep?.id || '');
+    const effectiveEmployeeCode = String(record.employeeCode || matchedRep?.code || effectiveEmployeeId || 'EMP');
+    const effectiveEmployeeName = String(record.employeeName || matchedRep?.name || 'Employee');
+    const effectiveFrom =
+      record.effectiveFrom && /^\d{4}-\d{2}-\d{2}/.test(record.effectiveFrom)
+        ? record.effectiveFrom.slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+
+    // Keep linked employee basic/conveyance/mobile columns aligned on field_force_reps
+    if (matchedRep) {
+      updateFieldForceRep(matchedRep.id, {
+        basicSalaryBDT: Number(record.basicSalaryBDT) || 0,
+        conveyanceBDT: Number(record.conveyanceAllowanceBDT) || 0,
+        mobileAllowanceBDT: Number(record.mobileAllowanceBDT) || 0,
+      });
+    }
+
+    const upsertPayload: Record<string, any> = {
+      id: String(record.id),
+      employee_id: effectiveEmployeeId,
+      employee_code: effectiveEmployeeCode,
+      employee_name: effectiveEmployeeName,
+      basic_salary_bdt: Number(record.basicSalaryBDT) || 0,
+      house_rent_bdt: Number(record.houseRentBDT) || 0,
+      medical_allowance_bdt: Number(record.medicalAllowanceBDT) || 0,
+      conveyance_allowance_bdt: Number(record.conveyanceAllowanceBDT) || 0,
+      mobile_allowance_bdt: Number(record.mobileAllowanceBDT) || 0,
+      special_allowance_bdt: Number(record.specialAllowanceBDT) || 0,
+      other_allowances_bdt: Number(record.otherAllowancesBDT) || 0,
+      gross_salary_bdt: Number(record.grossSalaryBDT) || 0,
+      effective_from: effectiveFrom,
+      history_json: Array.isArray(record.history) ? record.history : [],
+      updated_at: new Date().toISOString(),
+    };
+
+    try {
+      let lastError: any = null;
+      const workingPayload: Record<string, any> = { ...upsertPayload };
+
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const { error } = await sb
+          .from('employee_salary_structures')
+          .upsert(workingPayload, { onConflict: 'id' });
+
+        if (!error) {
+          const okStatus: SalaryStructuresDbStatus = {
+            synced: true,
+            status: 'synced',
+            error: null,
+            sqlFix: null,
+          };
+          setSalaryStructuresDbStatus(okStatus);
+          return { dbSynced: true, dbStatus: okStatus };
+        }
+
+        lastError = error;
+        const msg = String(error.message || '');
+        let missingCol: string | null = null;
+        if (error.code === 'PGRST204' || msg.includes('schema cache')) {
+          missingCol = msg.match(/Could not find the '([^']+)' column/i)?.[1] || null;
+        } else if (error.code === '42703' || msg.toLowerCase().includes('does not exist')) {
+          missingCol =
+            msg.match(/column\s+"([^"]+)"/i)?.[1] ||
+            msg.match(/column\s+(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)/i)?.[1] ||
+            null;
+        }
+        if (missingCol && Object.prototype.hasOwnProperty.call(workingPayload, missingCol)) {
+          delete workingPayload[missingCol];
+          continue;
+        }
+        break;
+      }
+
+      const failStatus = classifySalaryStructuresSupabaseError(lastError);
+      setSalaryStructuresDbStatus(failStatus);
+      console.error('[SalaryStructure] Supabase save failed:', lastError);
+      return {
+        dbSynced: false,
+        error: failStatus.error || lastError?.message || 'Failed to save salary structure to Supabase.',
+        sqlFix: failStatus.sqlFix || SALARY_STRUCTURES_TABLE_SQL,
+        dbStatus: failStatus,
+      };
+    } catch (err: any) {
+      const failStatus = classifySalaryStructuresSupabaseError(err);
+      setSalaryStructuresDbStatus(failStatus);
+      console.error('[SalaryStructure] Supabase save exception:', err);
+      return {
+        dbSynced: false,
+        error: failStatus.error || err?.message || 'Network error while saving salary structure.',
+        sqlFix: failStatus.sqlFix || SALARY_STRUCTURES_TABLE_SQL,
+        dbStatus: failStatus,
+      };
+    }
+  };
+
+  const addSalaryStructure = async (
+    structure: Omit<EmployeeSalaryStructure, 'id' | 'createdAt' | 'updatedAt'>
+  ): Promise<{
+    success: boolean;
+    id: string;
+    dbSynced: boolean;
+    error?: string;
+    sqlFix?: string;
+  }> => {
+    const empKey = String(structure.employeeId || structure.fieldForceId || '').trim();
+    const existing = salaryStructures.find(
+      (s) =>
+        (empKey && (s.employeeId === empKey || s.fieldForceId === empKey)) ||
+        (structure.employeeCode && s.employeeCode === structure.employeeCode)
+    );
+    const id = existing?.id || `sal-str-${empKey || Date.now().toString().slice(-6)}`;
     const now = new Date().toISOString().slice(0, 10);
+    const prevHistory = existing?.history || [];
+    const newEntry = {
+      effectiveDate: structure.effectiveFrom || now,
+      grossSalaryBDT: structure.grossSalaryBDT,
+      basicSalaryBDT: structure.basicSalaryBDT,
+      reason: structure.revisionReason || (existing ? 'Salary Structure Revision' : 'Initial Structure Creation'),
+      changedBy: structure.revisedBy || currentUser?.name || 'HR Admin',
+      changedAt: now,
+    };
+
     const newStr: EmployeeSalaryStructure = {
       ...structure,
       id,
-      createdAt: now,
+      employeeId: empKey || existing?.employeeId,
+      fieldForceId: empKey || existing?.fieldForceId,
+      createdAt: existing?.createdAt || now,
       updatedAt: now,
-      history: [
-        {
-          effectiveDate: structure.effectiveFrom,
-          grossSalaryBDT: structure.grossSalaryBDT,
-          basicSalaryBDT: structure.basicSalaryBDT,
-          reason: 'Initial Structure Creation',
-          changedBy: currentUser?.name || 'HR Admin',
-          changedAt: now,
-        },
-      ],
+      history: [...prevHistory, newEntry],
     };
-    setSalaryStructures((prev) => [newStr, ...prev.filter((s) => s.employeeId !== structure.employeeId)]);
+
+    setSalaryStructures((prev) => [
+      newStr,
+      ...prev.filter(
+        (s) =>
+          s.id !== id &&
+          !(empKey && (s.employeeId === empKey || s.fieldForceId === empKey))
+      ),
+    ]);
+
     addAuditLog(
       'SALARY_STRUCTURE_SET',
       'HR & Payroll',
       `Configured salary structure for employee ${structure.employeeName} (${structure.employeeCode}) - Gross: ৳${structure.grossSalaryBDT.toLocaleString()}`
     );
-    return id;
+
+    const syncRes = await persistSalaryStructureToSupabase(newStr);
+    return {
+      success: true,
+      id,
+      dbSynced: syncRes.dbSynced,
+      error: syncRes.error,
+      sqlFix: syncRes.sqlFix,
+    };
   };
 
-  const updateSalaryStructure = (id: string, updates: Partial<EmployeeSalaryStructure>, reason?: string) => {
+  const updateSalaryStructure = async (
+    id: string,
+    updates: Partial<EmployeeSalaryStructure>,
+    reason?: string
+  ): Promise<{
+    success: boolean;
+    id: string;
+    dbSynced: boolean;
+    error?: string;
+    sqlFix?: string;
+  }> => {
     const now = new Date().toISOString().slice(0, 10);
-    setSalaryStructures((prev) =>
-      prev.map((s) => {
-        if (s.id === id) {
-          const history = [...(s.history || [])];
-          if (updates.grossSalaryBDT && updates.grossSalaryBDT !== s.grossSalaryBDT) {
-            history.push({
-              effectiveDate: updates.effectiveFrom || now,
-              grossSalaryBDT: updates.grossSalaryBDT,
-              basicSalaryBDT: updates.basicSalaryBDT || s.basicSalaryBDT,
-              reason: reason || 'Salary Revision / Increment',
-              changedBy: currentUser?.name || 'HR Admin',
-              changedAt: now,
-            });
-          }
-          return { ...s, ...updates, updatedAt: now, history };
-        }
-        return s;
-      })
+    const existing = salaryStructures.find(
+      (s) =>
+        s.id === id ||
+        (updates.employeeId && (s.employeeId === updates.employeeId || s.fieldForceId === updates.employeeId))
     );
-    addAuditLog('SALARY_STRUCTURE_UPDATED', 'HR & Payroll', `Updated salary structure ID ${id}`);
+
+    if (!existing) {
+      return addSalaryStructure({
+        employeeId: updates.employeeId || updates.fieldForceId,
+        fieldForceId: updates.fieldForceId || updates.employeeId,
+        employeeCode: updates.employeeCode || '',
+        employeeName: updates.employeeName || 'Employee',
+        designation: updates.designation || 'Staff',
+        department: updates.department || 'Operations',
+        employeeCategory: updates.employeeCategory,
+        effectiveFrom: updates.effectiveFrom || now,
+        basicSalaryBDT: updates.basicSalaryBDT ?? 0,
+        houseRentBDT: updates.houseRentBDT ?? 0,
+        medicalAllowanceBDT: updates.medicalAllowanceBDT ?? 0,
+        conveyanceAllowanceBDT: updates.conveyanceAllowanceBDT ?? 0,
+        mobileAllowanceBDT: updates.mobileAllowanceBDT ?? 0,
+        specialAllowanceBDT: updates.specialAllowanceBDT ?? 0,
+        otherAllowancesBDT: updates.otherAllowancesBDT ?? 0,
+        grossSalaryBDT: updates.grossSalaryBDT ?? 0,
+        revisionReason: reason || updates.revisionReason || 'Salary Structure Revision',
+        revisedBy: updates.revisedBy || currentUser?.name || 'HR Admin',
+      });
+    }
+
+    const history = [...(existing.history || [])];
+    const hasMonetaryChange =
+      updates.grossSalaryBDT !== existing.grossSalaryBDT ||
+      updates.basicSalaryBDT !== existing.basicSalaryBDT ||
+      updates.houseRentBDT !== existing.houseRentBDT ||
+      updates.medicalAllowanceBDT !== existing.medicalAllowanceBDT ||
+      updates.conveyanceAllowanceBDT !== existing.conveyanceAllowanceBDT ||
+      updates.mobileAllowanceBDT !== existing.mobileAllowanceBDT ||
+      updates.specialAllowanceBDT !== existing.specialAllowanceBDT ||
+      updates.otherAllowancesBDT !== existing.otherAllowancesBDT;
+
+    if (hasMonetaryChange || (reason && reason.trim() && reason.trim() !== 'Salary Structure Revision')) {
+      history.push({
+        effectiveDate: updates.effectiveFrom || existing.effectiveFrom || now,
+        grossSalaryBDT: updates.grossSalaryBDT ?? existing.grossSalaryBDT,
+        basicSalaryBDT: updates.basicSalaryBDT ?? existing.basicSalaryBDT,
+        reason: reason || updates.revisionReason || 'Salary Revision / Increment',
+        changedBy: updates.revisedBy || currentUser?.name || 'HR Admin',
+        changedAt: now,
+      });
+    }
+
+    const updatedRecord: EmployeeSalaryStructure = {
+      ...existing,
+      ...updates,
+      id: existing.id,
+      updatedAt: now,
+      history,
+    };
+
+    setSalaryStructures((prev) =>
+      prev.map((s) => (s.id === existing.id ? updatedRecord : s))
+    );
+
+    addAuditLog(
+      'SALARY_STRUCTURE_UPDATED',
+      'HR & Payroll',
+      `Updated salary structure for ${updatedRecord.employeeName} (${updatedRecord.employeeCode || existing.id}) - Gross: ৳${(updatedRecord.grossSalaryBDT || 0).toLocaleString()}`
+    );
+
+    const syncRes = await persistSalaryStructureToSupabase(updatedRecord);
+    return {
+      success: true,
+      id: existing.id,
+      dbSynced: syncRes.dbSynced,
+      error: syncRes.error,
+      sqlFix: syncRes.sqlFix,
+    };
+  };
+
+  const syncSalaryStructuresToSupabase = async (): Promise<{
+    success: boolean;
+    syncedCount: number;
+    error?: string;
+    sqlFix?: string;
+  }> => {
+    const recordsToSync = salaryStructures.filter((s) => {
+      const empId = s.employeeId || s.fieldForceId;
+      if (!empId) return false;
+      return !String(s.id).startsWith('str-ff-') || fieldForceReps.some((r) => r.id === empId);
+    });
+
+    if (recordsToSync.length === 0) {
+      // Probe table write/select access even when 0 edited records exist
+      const sb = getSupabase();
+      if (!sb) {
+        return { success: false, syncedCount: 0, error: 'Supabase client is not configured.' };
+      }
+      const { error } = await sb.from('employee_salary_structures').select('id').limit(1);
+      if (error) {
+        const failStatus = classifySalaryStructuresSupabaseError(error);
+        setSalaryStructuresDbStatus(failStatus);
+        return {
+          success: false,
+          syncedCount: 0,
+          error: failStatus.error || error.message,
+          sqlFix: failStatus.sqlFix || SALARY_STRUCTURES_TABLE_SQL,
+        };
+      }
+      setSalaryStructuresDbStatus({ synced: true, status: 'synced', error: null, sqlFix: null });
+      return { success: true, syncedCount: 0 };
+    }
+
+    let syncedCount = 0;
+    for (const rec of recordsToSync) {
+      const res = await persistSalaryStructureToSupabase(rec);
+      if (!res.dbSynced) {
+        return {
+          success: false,
+          syncedCount,
+          error: res.error,
+          sqlFix: res.sqlFix,
+        };
+      }
+      syncedCount++;
+    }
+
+    return { success: true, syncedCount };
   };
 
   const getEmployeeSalaryStructure = (employeeId: string): EmployeeSalaryStructure | undefined => {
-    return salaryStructures.find((s) => s.employeeId === employeeId);
+    return salaryStructures.find(
+      (s) => s.employeeId === employeeId || s.fieldForceId === employeeId
+    );
   };
 
   const formatOfficeLocationSupabaseError = (error: any): string => {
@@ -21712,7 +22267,13 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       logoDataUrl: string | null;
       logoFileName?: string | null;
       logoMimeType?: string | null;
-    }): Promise<{ success: boolean; error?: string; branding?: SystemBrandingConfig }> => {
+    }): Promise<{
+      success: boolean;
+      error?: string;
+      branding?: SystemBrandingConfig;
+      dbSynced?: boolean;
+      dbStatus?: SystemSettingsDbStatus;
+    }> => {
       const sendRequest = async () => {
         return fetch('/api/system-settings/branding', {
           method: 'PUT',
@@ -21748,6 +22309,36 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           localStorage.setItem(SYSTEM_SETTINGS_CACHE_KEY, JSON.stringify(nextSettings));
         } catch {}
 
+        let finalDbStatus: SystemSettingsDbStatus = data?.dbStatus || {
+          synced: Boolean(data?.dbSynced),
+          status: data?.dbSynced ? 'synced' : 'unknown',
+          error: null,
+          sqlFix: null,
+        };
+
+        // If browser uses a custom Supabase URL, also upsert directly from browser client
+        const client = getSupabase();
+        const usingCustomSupabase = getSupabaseUrl() !== DEFAULT_SUPABASE_URL;
+        if (client && usingCustomSupabase) {
+          const { error: clientErr } = await client.from('system_settings').upsert(
+            {
+              id: 'default',
+              software_name: nextSettings.branding.softwareName,
+              logo_data_url: nextSettings.branding.logoDataUrl,
+              branding_json: nextSettings.branding,
+              settings_json: { branding: nextSettings.branding },
+              updated_by: nextSettings.updatedBy || nextSettings.branding.updatedBy || currentUser?.name || 'Admin',
+              updated_at: nextSettings.updatedAt || nextSettings.branding.updatedAt || new Date().toISOString(),
+            },
+            { onConflict: 'id' }
+          );
+          finalDbStatus = clientErr
+            ? classifyClientSupabaseSettingsError(clientErr)
+            : { synced: true, status: 'synced', error: null, sqlFix: null };
+        }
+
+        setSystemSettingsDbStatus(finalDbStatus);
+
         addAuditLog(
           'SYSTEM_BRANDING_UPDATED',
           'System Settings',
@@ -21756,7 +22347,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }`
         );
 
-        return { success: true, branding: nextSettings.branding };
+        return {
+          success: true,
+          branding: nextSettings.branding,
+          dbSynced: Boolean(finalDbStatus.synced),
+          dbStatus: finalDbStatus,
+        };
       } catch (err: any) {
         return {
           success: false,
@@ -21764,8 +22360,90 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       }
     },
-    [getErpAuthHeaders, isAuthenticated, currentUser, establishServerSession]
+    [getErpAuthHeaders, isAuthenticated, currentUser, establishServerSession, classifyClientSupabaseSettingsError]
   );
+
+  const syncSystemSettingsToDatabase = useCallback(async (): Promise<{
+    success: boolean;
+    dbSynced: boolean;
+    dbStatus?: SystemSettingsDbStatus;
+    error?: string;
+  }> => {
+    const sendSync = async () => {
+      return fetch('/api/system-settings/sync', {
+        method: 'POST',
+        headers: getErpAuthHeaders(),
+        body: JSON.stringify({}),
+      });
+    };
+
+    try {
+      let resp = await sendSync();
+      if (resp.status === 401 && isAuthenticated && currentUser?.id && currentUser.id !== 'guest') {
+        await establishServerSession(currentUser);
+        resp = await sendSync();
+      }
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        return {
+          success: false,
+          dbSynced: false,
+          error: data?.error || `Failed to sync system settings (HTTP ${resp.status}).`,
+        };
+      }
+
+      let finalDbStatus: SystemSettingsDbStatus = data?.dbStatus || {
+        synced: Boolean(data?.dbSynced),
+        status: data?.dbSynced ? 'synced' : 'error',
+        error: null,
+        sqlFix: SYSTEM_SETTINGS_TABLE_SQL,
+      };
+
+      const settingsToPersist = data?.settings
+        ? normalizeSystemSettings(data.settings)
+        : systemSettings;
+
+      const client = getSupabase();
+      const usingCustomSupabase = getSupabaseUrl() !== DEFAULT_SUPABASE_URL;
+      if (client && usingCustomSupabase) {
+        const { error: clientErr } = await client.from('system_settings').upsert(
+          {
+            id: 'default',
+            software_name: settingsToPersist.branding.softwareName,
+            logo_data_url: settingsToPersist.branding.logoDataUrl,
+            branding_json: settingsToPersist.branding,
+            settings_json: { branding: settingsToPersist.branding },
+            updated_by: settingsToPersist.updatedBy || settingsToPersist.branding.updatedBy || currentUser?.name || 'Admin',
+            updated_at: settingsToPersist.updatedAt || settingsToPersist.branding.updatedAt || new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        );
+        finalDbStatus = clientErr
+          ? classifyClientSupabaseSettingsError(clientErr)
+          : { synced: true, status: 'synced', error: null, sqlFix: null };
+      }
+
+      setSystemSettings(settingsToPersist);
+      setSystemSettingsDbStatus(finalDbStatus);
+      try {
+        localStorage.setItem(SYSTEM_SETTINGS_CACHE_KEY, JSON.stringify(settingsToPersist));
+      } catch {}
+
+      return {
+        success: Boolean(finalDbStatus.synced),
+        dbSynced: Boolean(finalDbStatus.synced),
+        dbStatus: finalDbStatus,
+        error: finalDbStatus.error || undefined,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        dbSynced: false,
+        error: err?.message || 'Network error while syncing system settings to database.',
+      };
+    }
+  }, [getErpAuthHeaders, isAuthenticated, currentUser, establishServerSession, systemSettings, classifyClientSupabaseSettingsError]);
 
   return (
     <ERPContext.Provider
@@ -21774,9 +22452,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleTheme,
         systemSettings,
         systemBranding,
+        systemSettingsDbStatus,
         isSystemSettingsLoaded,
         refreshSystemSettings,
         updateSystemBranding,
+        syncSystemSettingsToDatabase,
         currentUser,
         setCurrentUser,
         isAuthenticated,
@@ -22096,6 +22776,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteOfficeLocation,
         refreshOfficeLocations,
         salaryStructures,
+        salaryStructuresDbStatus,
+        refreshSalaryStructures,
+        syncSalaryStructuresToSupabase,
         attendanceRecords,
         rejectedAttendanceAttempts,
         recordRejectedAttendanceAttempt,

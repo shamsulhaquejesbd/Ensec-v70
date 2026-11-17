@@ -25,6 +25,35 @@ export interface SystemSettingsConfig {
   updatedBy?: string | null;
 }
 
+export interface SystemSettingsDbStatus {
+  synced: boolean;
+  status: 'synced' | 'table_missing' | 'rls_blocked' | 'error' | 'not_configured' | 'unknown';
+  error?: string | null;
+  sqlFix?: string | null;
+}
+
+export const SYSTEM_SETTINGS_TABLE_SQL = `-- Run this in your Supabase SQL Editor to enable persistent database storage for Settings -> System Branding:
+CREATE TABLE IF NOT EXISTS public.system_settings (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  software_name TEXT NOT NULL DEFAULT 'Ensec',
+  logo_data_url TEXT,
+  branding_json JSONB NOT NULL DEFAULT '{"softwareName":"Ensec","logoDataUrl":null}'::jsonb,
+  settings_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_by TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public all system_settings" ON public.system_settings;
+CREATE POLICY "Allow public all system_settings" ON public.system_settings FOR ALL USING (true) WITH CHECK (true);
+
+GRANT ALL ON public.system_settings TO postgres, anon, authenticated, service_role;
+
+INSERT INTO public.system_settings (id, software_name, branding_json)
+VALUES ('default', 'Ensec', '{"softwareName":"Ensec","logoDataUrl":null}'::jsonb)
+ON CONFLICT (id) DO NOTHING;`;
+
 export const DEFAULT_SYSTEM_BRANDING: SystemBrandingConfig = {
   softwareName: DEFAULT_SOFTWARE_NAME,
   logoDataUrl: null,
@@ -42,17 +71,26 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettingsConfig = {
 };
 
 export const ALLOWED_LOGO_DATA_URL_REGEX =
-  /^data:image\/(png|jpeg|jpg|webp|svg\+xml|gif|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+$/i;
+  /^data:image\/(png|jpeg|jpg|webp|svg\+xml|gif|bmp|avif|ico|x-icon|vnd\.microsoft\.icon)(?:;[a-z0-9._+-]+=[^;,]+)*;base64,[A-Za-z0-9+/=]+$/i;
 
 export const MAX_LOGO_DATA_URL_LENGTH = 5 * 1024 * 1024; // ~3.7MB raw file
 
-export function isValidBrandingLogoDataUrl(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
+export function cleanBrandingLogoDataUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > MAX_LOGO_DATA_URL_LENGTH) return false;
-  if (ALLOWED_LOGO_DATA_URL_REGEX.test(trimmed)) return true;
+  if (!trimmed) return null;
+  if (/^data:image\//i.test(trimmed)) {
+    return trimmed.replace(/\s+/g, '');
+  }
+  return trimmed;
+}
+
+export function isValidBrandingLogoDataUrl(value: unknown): value is string {
+  const cleaned = cleanBrandingLogoDataUrl(value);
+  if (!cleaned || cleaned.length > MAX_LOGO_DATA_URL_LENGTH) return false;
+  if (ALLOWED_LOGO_DATA_URL_REGEX.test(cleaned)) return true;
   // Also allow HTTPS URLs if explicitly stored in DB
-  if (/^https:\/\/[^\s]+$/i.test(trimmed)) return true;
+  if (/^https:\/\/[^\s]+$/i.test(cleaned)) return true;
   return false;
 }
 
@@ -68,9 +106,10 @@ export function normalizeSystemBranding(raw?: Partial<SystemBrandingConfig> | nu
     return { ...DEFAULT_SYSTEM_BRANDING };
   }
   const softwareName = normalizeSoftwareName(raw.softwareName);
+  const cleanedLogo = cleanBrandingLogoDataUrl(raw.logoDataUrl);
   const logoDataUrl =
-    raw.logoDataUrl && isValidBrandingLogoDataUrl(raw.logoDataUrl)
-      ? raw.logoDataUrl.trim()
+    cleanedLogo && isValidBrandingLogoDataUrl(cleanedLogo)
+      ? cleanedLogo
       : null;
 
   return {
