@@ -53,6 +53,29 @@ export interface PermissionTemplate {
   permissions: UserPagePermissionsMap;
 }
 
+export const OVERTIME_SUBPAGE_ACTION_MAP: Record<string, string> = {
+  'overtime-requests': 'view_requests',
+  'overtime-attendance': 'view_attendance',
+  'overtime-batch-allocation': 'view_batch_allocation',
+  'overtime-sync': 'view_payroll_sync',
+  'overtime-policies': 'view_policies',
+  'overtime-reports': 'view_reports',
+};
+
+export const OVERTIME_SUBPAGE_ACTION_KEYS: readonly string[] = Object.values(OVERTIME_SUBPAGE_ACTION_MAP);
+
+export const OVERTIME_REPORT_ACTION_MAP: Record<number, { key: string; label: string }> = {
+  1: { key: 'report_employee_monthly', label: 'Employee-wise Monthly Overtime Report' },
+  2: { key: 'report_daily_factory_bill', label: 'Daily Factory Overtime Bill Report' },
+  3: { key: 'report_production_batch_cost', label: 'Production Batch-wise Overtime Cost Report' },
+  4: { key: 'report_production_order_cost', label: 'Production Order-wise Overtime Cost Report' },
+  5: { key: 'report_payroll_reconciliation', label: 'Monthly Overtime Payroll Reconciliation Report' },
+  6: { key: 'report_pending_approval_workflow', label: 'Pending Overtime Approval Workflow Report' },
+  7: { key: 'report_hours_vs_output', label: 'Overtime Hours vs Production Output Report' },
+};
+
+export const OVERTIME_REPORT_ACTION_KEYS: readonly string[] = Object.values(OVERTIME_REPORT_ACTION_MAP).map((r) => r.key);
+
 // Complete registry of all ERP modules, subpages, and action-based permissions
 export const ERP_PAGE_PERMISSIONS_REGISTRY: ERPModuleCategory[] = [
   {
@@ -932,6 +955,55 @@ export const ERP_PAGE_PERMISSIONS_REGISTRY: ERPModuleCategory[] = [
             subsection: 'Page-Wise Access Permissions',
             group: 'Overtime Management Pages',
           },
+          {
+            key: 'report_employee_monthly',
+            label: 'Employee-wise Monthly Overtime Report',
+            description: 'Aggregated monthly overtime hours, wage rates, and earnings per worker',
+            subsection: 'Reports',
+            group: 'Overtime Management',
+          },
+          {
+            key: 'report_daily_factory_bill',
+            label: 'Daily Factory Overtime Bill Report',
+            description: 'Daily Overtime Bill Factory sheet with 31-day breakdown, rates & signatures',
+            subsection: 'Reports',
+            group: 'Overtime Management',
+          },
+          {
+            key: 'report_production_batch_cost',
+            label: 'Production Batch-wise Overtime Cost Report',
+            description: 'Direct OT cost absorbed per manufactured battery batch',
+            subsection: 'Reports',
+            group: 'Overtime Management',
+          },
+          {
+            key: 'report_production_order_cost',
+            label: 'Production Order-wise Overtime Cost Report',
+            description: 'Overtime expense absorbed per Production Work Order',
+            subsection: 'Reports',
+            group: 'Overtime Management',
+          },
+          {
+            key: 'report_payroll_reconciliation',
+            label: 'Monthly Overtime Payroll Reconciliation Report',
+            description: 'Payable overtime amounts audited against salary sheets',
+            subsection: 'Reports',
+            group: 'Overtime Management',
+          },
+          {
+            key: 'report_pending_approval_workflow',
+            label: 'Pending Overtime Approval Workflow Report',
+            description: 'Bottlenecks and requests awaiting Supervisor, Production Mgr, or HR sign-off',
+            subsection: 'Reports',
+            group: 'Overtime Management',
+          },
+          {
+            key: 'report_hours_vs_output',
+            label: 'Overtime Hours vs Production Output Report',
+            description: 'Efficiency ratio of overtime input hours to finished goods units produced',
+            subsection: 'Reports',
+            group: 'Overtime Management',
+          },
         ],
       },
       {
@@ -1286,6 +1358,7 @@ export const PERMISSION_TEMPLATES: PermissionTemplate[] = [
             act.key === 'view_payroll_sync' ||
             act.key === 'view_policies' ||
             act.key === 'view_reports' ||
+            OVERTIME_REPORT_ACTION_KEYS.includes(act.key) ||
             act.key === 'export'
           ) {
             map[page.id][act.key] = true;
@@ -1306,16 +1379,6 @@ export const PERMISSION_TEMPLATES: PermissionTemplate[] = [
  * 2. User has explicit true for [pageId][actionKey]
  * 3. Fallback: If pagePermissions not set, fallback gracefully to legacy allowedModules / role default
  */
-export const OVERTIME_SUBPAGE_ACTION_MAP: Record<string, string> = {
-  'overtime-requests': 'view_requests',
-  'overtime-attendance': 'view_attendance',
-  'overtime-batch-allocation': 'view_batch_allocation',
-  'overtime-sync': 'view_payroll_sync',
-  'overtime-policies': 'view_policies',
-  'overtime-reports': 'view_reports',
-};
-
-export const OVERTIME_SUBPAGE_ACTION_KEYS: readonly string[] = Object.values(OVERTIME_SUBPAGE_ACTION_MAP);
 
 export function hasPageAction(
   user: any,
@@ -1356,7 +1419,7 @@ export function hasPageAction(
   if (pagePerms && typeof pagePerms === 'object') {
     const pageObj = pagePerms[canonicalPageId] || pagePerms[pageId];
 
-    // Enforce the 6 page-wise Overtime Management permissions when routing by sidebar ID or sub-page key
+    // Enforce the 6 page-wise Overtime Management permissions & 7 report permissions
     if (canonicalPageId === 'overtime-management') {
       if (pageObj && typeof pageObj === 'object') {
         if (actionKey === 'view' && otSubPageActionKey) {
@@ -1372,6 +1435,14 @@ export function hasPageAction(
             return Boolean(pageObj[actionKey]);
           }
           return true;
+        }
+        if (OVERTIME_REPORT_ACTION_KEYS.includes(actionKey)) {
+          if (!pageObj.view) return false;
+          if (pageObj.view_reports === false) return false;
+          if (pageObj[actionKey] !== undefined) {
+            return Boolean(pageObj[actionKey]);
+          }
+          return true; // Backward compatibility for existing users with view_reports access
         }
       }
     }
@@ -1451,6 +1522,13 @@ export function hasPageAction(
     return Boolean(
       allowed.includes('overtime-management') ||
       (matchingChild && allowed.includes(matchingChild))
+    );
+  }
+
+  if (canonicalPageId === 'overtime-management' && OVERTIME_REPORT_ACTION_KEYS.includes(actionKey)) {
+    return Boolean(
+      allowed.includes('overtime-management') ||
+      allowed.includes('overtime-reports')
     );
   }
 

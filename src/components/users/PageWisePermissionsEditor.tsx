@@ -53,6 +53,7 @@ import {
   ERPPageDef,
   OVERTIME_SUBPAGE_ACTION_KEYS,
   OVERTIME_SUBPAGE_ACTION_MAP,
+  OVERTIME_REPORT_ACTION_KEYS,
 } from '../../types/pagePermissions.ts';
 
 interface PageWisePermissionsEditorProps {
@@ -148,6 +149,20 @@ export const PageWisePermissionsEditor: React.FC<PageWisePermissionsEditorProps>
               (matchingChild && allowedMods.includes(matchingChild as any))
           );
           userMap[page.id][act.key] = hasLegacyOtAccess;
+        } else if (
+          page.id === 'overtime-management' &&
+          OVERTIME_REPORT_ACTION_KEYS.includes(act.key)
+        ) {
+          const hasLegacyReportsAccess = pageExisting
+            ? Boolean(
+                pageExisting.view &&
+                  (pageExisting.view_reports !== undefined ? pageExisting.view_reports : true)
+              )
+            : Boolean(
+                allowedMods.includes('overtime-management' as any) ||
+                  allowedMods.includes('overtime-reports' as any)
+              );
+          userMap[page.id][act.key] = hasLegacyReportsAccess;
         } else if (page.id === 'raw-material-inventory' && ['view_raw_material_stock_value', 'view_raw_material_purchase_rate', 'view_batch_stock_value'].includes(act.key)) {
           const isFactory = targetUser.role === 'Factory Manager' || targetUser.role === 'Warehouse Manager' || (targetUser.department && targetUser.department.toLowerCase().includes('factory'));
           if (!isFactory && pageExisting && pageExisting['view_valuation'] !== undefined) {
@@ -218,6 +233,15 @@ export const PageWisePermissionsEditor: React.FC<PageWisePermissionsEditorProps>
       // RULE: If any non-view action is enabled, automatically enable 'view'
       if (nextVal && actionKey !== 'view') {
         pageObj['view'] = true;
+      }
+
+      // RULE: If an individual OT report is enabled, automatically enable 'view_reports'
+      if (
+        nextVal &&
+        pageId === 'overtime-management' &&
+        OVERTIME_REPORT_ACTION_KEYS.includes(actionKey)
+      ) {
+        pageObj['view_reports'] = true;
       }
 
       // RULE: If 'view' is disabled, automatically disable all other actions on this page
@@ -335,6 +359,21 @@ export const PageWisePermissionsEditor: React.FC<PageWisePermissionsEditorProps>
               srcAllowedMods.includes('overtime-management' as any) ||
               (matchingChild && srcAllowedMods.includes(matchingChild as any))
           );
+        } else if (
+          page.id === 'overtime-management' &&
+          OVERTIME_REPORT_ACTION_KEYS.includes(act.key)
+        ) {
+          newMap[page.id][act.key] = srcPerms[page.id]
+            ? Boolean(
+                srcPerms[page.id].view &&
+                  (srcPerms[page.id].view_reports !== undefined
+                    ? srcPerms[page.id].view_reports
+                    : true)
+              )
+            : Boolean(
+                srcAllowedMods.includes('overtime-management' as any) ||
+                  srcAllowedMods.includes('overtime-reports' as any)
+              );
         } else {
           newMap[page.id][act.key] = false;
         }
@@ -991,14 +1030,32 @@ export const PageWisePermissionsEditor: React.FC<PageWisePermissionsEditorProps>
                                   new Set(actionsInSub.map((a) => a.group || 'General'))
                                 );
 
+                                const isReportsCheckboxSection = subTitle === 'Reports';
+
                                 return (
                                   <div
                                     key={subTitle}
-                                    className="mt-3 p-3.5 rounded-xl border border-amber-200/90 dark:border-amber-800/70 bg-amber-50/40 dark:bg-amber-950/15 space-y-3"
+                                    className={`mt-3 p-3.5 rounded-xl border space-y-3 ${
+                                      isReportsCheckboxSection
+                                        ? 'border-blue-200/90 dark:border-blue-800/70 bg-blue-50/40 dark:bg-blue-950/15'
+                                        : 'border-amber-200/90 dark:border-amber-800/70 bg-amber-50/40 dark:bg-amber-950/15'
+                                    }`}
                                   >
-                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-amber-200/70 dark:border-amber-800/50">
+                                    <div
+                                      className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b ${
+                                        isReportsCheckboxSection
+                                          ? 'border-blue-200/70 dark:border-blue-800/50'
+                                          : 'border-amber-200/70 dark:border-amber-800/50'
+                                      }`}
+                                    >
                                       <div className="flex items-center gap-2">
-                                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300">
+                                        <span
+                                          className={`inline-flex items-center justify-center w-6 h-6 rounded-lg ${
+                                            isReportsCheckboxSection
+                                              ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300'
+                                              : 'bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300'
+                                          }`}
+                                        >
                                           <Sliders className="w-3.5 h-3.5" />
                                         </span>
                                           <div>
@@ -1015,9 +1072,20 @@ export const PageWisePermissionsEditor: React.FC<PageWisePermissionsEditorProps>
                                                 Independent ON/OFF access controls for each Overtime Management page. Revoked pages are hidden from navigation and blocked across routes and API endpoints.
                                               </p>
                                             )}
+                                            {isReportsCheckboxSection && (
+                                              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                                                Toggle individual reports visible in the Overtime Management → Reports &amp; Export tab. Unchecked reports are hidden and restricted for this user.
+                                              </p>
+                                            )}
                                           </div>
                                         </div>
-                                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 self-start sm:self-center">
+                                        <span
+                                          className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border self-start sm:self-center ${
+                                            isReportsCheckboxSection
+                                              ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                                              : 'bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                                          }`}
+                                        >
                                           {actionsInSub.filter((a) => pagePerms[a.key]).length} / {actionsInSub.length} Enabled
                                         </span>
                                       </div>
@@ -1046,6 +1114,40 @@ export const PageWisePermissionsEditor: React.FC<PageWisePermissionsEditorProps>
                                               >
                                                 {grpActions.map((act) => {
                                                 const isGranted = Boolean(pagePerms[act.key]);
+                                                if (isReportsCheckboxSection) {
+                                                  return (
+                                                    <label
+                                                      key={act.key}
+                                                      className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition-all cursor-pointer select-none ${
+                                                        isGranted
+                                                          ? 'bg-blue-50/90 dark:bg-blue-950/40 border-blue-300 dark:border-blue-800 shadow-2xs'
+                                                          : 'bg-slate-50/70 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/70 hover:bg-slate-100/80 dark:hover:bg-slate-800'
+                                                      }`}
+                                                    >
+                                                      <input
+                                                        type="checkbox"
+                                                        checked={isGranted}
+                                                        onChange={() => handleToggleAction(page.id, act.key)}
+                                                        className="w-4 h-4 mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer shrink-0"
+                                                      />
+                                                      <div className="space-y-0.5 flex-1 min-w-0">
+                                                        <span
+                                                          className={`text-xs font-bold block leading-snug ${
+                                                            isGranted
+                                                              ? 'text-blue-950 dark:text-blue-200'
+                                                              : 'text-slate-700 dark:text-slate-300'
+                                                          }`}
+                                                        >
+                                                          {act.label}
+                                                        </span>
+                                                        <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+                                                          {act.description}
+                                                        </p>
+                                                      </div>
+                                                    </label>
+                                                  );
+                                                }
+
                                                 return (
                                                   <div
                                                     key={act.key}

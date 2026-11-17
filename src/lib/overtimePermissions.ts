@@ -27,6 +27,13 @@ export const OVERTIME_PAGE_PERMISSION_KEYS = {
   VIEW_COST: 'view_cost',
   CONFIGURE_POLICY: 'configure_policy',
   EXPORT: 'export',
+  REPORT_EMPLOYEE_MONTHLY: 'report_employee_monthly',
+  REPORT_DAILY_FACTORY_BILL: 'report_daily_factory_bill',
+  REPORT_PRODUCTION_BATCH_COST: 'report_production_batch_cost',
+  REPORT_PRODUCTION_ORDER_COST: 'report_production_order_cost',
+  REPORT_PAYROLL_RECONCILIATION: 'report_payroll_reconciliation',
+  REPORT_PENDING_APPROVAL_WORKFLOW: 'report_pending_approval_workflow',
+  REPORT_HOURS_VS_OUTPUT: 'report_hours_vs_output',
 } as const;
 
 export type OvertimePageSlug =
@@ -57,6 +64,13 @@ export interface OvertimePermissions {
   viewCost: boolean;
   configurePolicy: boolean;
   exportReports: boolean;
+  reportEmployeeMonthly: boolean;
+  reportDailyFactoryBill: boolean;
+  reportProductionBatchCost: boolean;
+  reportProductionOrderCost: boolean;
+  reportPayrollReconciliation: boolean;
+  reportPendingApprovalWorkflow: boolean;
+  reportHoursVsOutput: boolean;
 }
 
 export const ALL_OVERTIME_PERMISSIONS_OFF: OvertimePermissions = {
@@ -79,6 +93,13 @@ export const ALL_OVERTIME_PERMISSIONS_OFF: OvertimePermissions = {
   viewCost: false,
   configurePolicy: false,
   exportReports: false,
+  reportEmployeeMonthly: false,
+  reportDailyFactoryBill: false,
+  reportProductionBatchCost: false,
+  reportProductionOrderCost: false,
+  reportPayrollReconciliation: false,
+  reportPendingApprovalWorkflow: false,
+  reportHoursVsOutput: false,
 };
 
 export const ALL_OVERTIME_PERMISSIONS_ON: OvertimePermissions = {
@@ -101,6 +122,13 @@ export const ALL_OVERTIME_PERMISSIONS_ON: OvertimePermissions = {
   viewCost: true,
   configurePolicy: true,
   exportReports: true,
+  reportEmployeeMonthly: true,
+  reportDailyFactoryBill: true,
+  reportProductionBatchCost: true,
+  reportProductionOrderCost: true,
+  reportPayrollReconciliation: true,
+  reportPendingApprovalWorkflow: true,
+  reportHoursVsOutput: true,
 };
 
 function parseUserPermissions(user: any): { pagePerms?: Record<string, Record<string, boolean>>; allowedModules: string[] } {
@@ -138,6 +166,22 @@ function resolveSubPageFlag(
   return allowedModules.includes('overtime-management') || allowedModules.includes(sidebarModuleId);
 }
 
+function resolveReportFlag(
+  otPerms: Record<string, boolean> | undefined,
+  allowedModules: string[],
+  actionKey: string,
+  viewReports: boolean
+): boolean {
+  if (!viewReports) return false;
+  if (otPerms) {
+    if (otPerms[actionKey] !== undefined) {
+      return Boolean(otPerms[actionKey]);
+    }
+    return true;
+  }
+  return allowedModules.includes('overtime-management') || allowedModules.includes('overtime-reports');
+}
+
 export function resolveOvertimePermissions(user: any): OvertimePermissions {
   if (!user || user.status === 'Blocked' || user.status === 'Inactive') {
     return { ...ALL_OVERTIME_PERMISSIONS_OFF };
@@ -155,6 +199,8 @@ export function resolveOvertimePermissions(user: any): OvertimePermissions {
     return { ...ALL_OVERTIME_PERMISSIONS_OFF };
   }
 
+  const viewReports = resolveSubPageFlag(otPerms, allowedModules, 'view_reports', 'overtime-reports');
+
   return {
     view: true,
     viewRequests: resolveSubPageFlag(otPerms, allowedModules, 'view_requests', 'overtime-requests'),
@@ -162,7 +208,7 @@ export function resolveOvertimePermissions(user: any): OvertimePermissions {
     viewBatchAllocation: resolveSubPageFlag(otPerms, allowedModules, 'view_batch_allocation', 'overtime-batch-allocation'),
     viewPayrollSync: resolveSubPageFlag(otPerms, allowedModules, 'view_payroll_sync', 'overtime-sync'),
     viewPolicies: resolveSubPageFlag(otPerms, allowedModules, 'view_policies', 'overtime-policies'),
-    viewReports: resolveSubPageFlag(otPerms, allowedModules, 'view_reports', 'overtime-reports'),
+    viewReports,
     createRequest: Boolean(otPerms?.create_request),
     editRequest: Boolean(otPerms?.edit_request),
     recordAttendance: Boolean(otPerms?.record_attendance),
@@ -175,6 +221,13 @@ export function resolveOvertimePermissions(user: any): OvertimePermissions {
     viewCost: Boolean(otPerms?.view_cost),
     configurePolicy: Boolean(otPerms?.configure_policy),
     exportReports: Boolean(otPerms?.export),
+    reportEmployeeMonthly: resolveReportFlag(otPerms, allowedModules, 'report_employee_monthly', viewReports),
+    reportDailyFactoryBill: resolveReportFlag(otPerms, allowedModules, 'report_daily_factory_bill', viewReports),
+    reportProductionBatchCost: resolveReportFlag(otPerms, allowedModules, 'report_production_batch_cost', viewReports),
+    reportProductionOrderCost: resolveReportFlag(otPerms, allowedModules, 'report_production_order_cost', viewReports),
+    reportPayrollReconciliation: resolveReportFlag(otPerms, allowedModules, 'report_payroll_reconciliation', viewReports),
+    reportPendingApprovalWorkflow: resolveReportFlag(otPerms, allowedModules, 'report_pending_approval_workflow', viewReports),
+    reportHoursVsOutput: resolveReportFlag(otPerms, allowedModules, 'report_hours_vs_output', viewReports),
   };
 }
 
@@ -204,6 +257,47 @@ export function authorizeOvertimeSubPage(
     return {
       allowed: false,
       reason: `Access Restricted: Your account lacks "${entry?.label || subPage}" permission under Overtime Management Hub.`,
+    };
+  }
+  return { allowed: true };
+}
+
+export function authorizeOvertimeReport(
+  user: any,
+  reportIdOrKey?: number | string
+): { allowed: boolean; reason?: string } {
+  const baseAuth = authorizeOvertimeSubPage(user, 'reports');
+  if (!baseAuth.allowed) return baseAuth;
+
+  const perms = resolveOvertimePermissions(user);
+  const reportEntries: Array<{ id: number; key: string; label: string; ok: boolean }> = [
+    { id: 1, key: OVERTIME_PAGE_PERMISSION_KEYS.REPORT_EMPLOYEE_MONTHLY, label: 'Employee-wise Monthly Overtime Report', ok: perms.reportEmployeeMonthly },
+    { id: 2, key: OVERTIME_PAGE_PERMISSION_KEYS.REPORT_DAILY_FACTORY_BILL, label: 'Daily Factory Overtime Bill Report', ok: perms.reportDailyFactoryBill },
+    { id: 3, key: OVERTIME_PAGE_PERMISSION_KEYS.REPORT_PRODUCTION_BATCH_COST, label: 'Production Batch-wise Overtime Cost Report', ok: perms.reportProductionBatchCost },
+    { id: 4, key: OVERTIME_PAGE_PERMISSION_KEYS.REPORT_PRODUCTION_ORDER_COST, label: 'Production Order-wise Overtime Cost Report', ok: perms.reportProductionOrderCost },
+    { id: 5, key: OVERTIME_PAGE_PERMISSION_KEYS.REPORT_PAYROLL_RECONCILIATION, label: 'Monthly Overtime Payroll Reconciliation Report', ok: perms.reportPayrollReconciliation },
+    { id: 6, key: OVERTIME_PAGE_PERMISSION_KEYS.REPORT_PENDING_APPROVAL_WORKFLOW, label: 'Pending Overtime Approval Workflow Report', ok: perms.reportPendingApprovalWorkflow },
+    { id: 7, key: OVERTIME_PAGE_PERMISSION_KEYS.REPORT_HOURS_VS_OUTPUT, label: 'Overtime Hours vs Production Output Report', ok: perms.reportHoursVsOutput },
+  ];
+
+  if (reportIdOrKey !== undefined && reportIdOrKey !== null && reportIdOrKey !== '') {
+    const normalized = String(reportIdOrKey).trim();
+    const target = reportEntries.find(
+      (r) => String(r.id) === normalized || r.key === normalized
+    );
+    if (!target || !target.ok) {
+      return {
+        allowed: false,
+        reason: `Access Restricted: Your account lacks permission for "${target?.label || normalized}".`,
+      };
+    }
+    return { allowed: true };
+  }
+
+  if (!reportEntries.some((r) => r.ok)) {
+    return {
+      allowed: false,
+      reason: 'Access Restricted: No individual Overtime Reports are enabled for your account.',
     };
   }
   return { allowed: true };

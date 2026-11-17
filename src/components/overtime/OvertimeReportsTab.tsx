@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useERP } from '../../context/ERPContext';
 import { calculateEmployeeIndividualOvertime } from '../../types/overtime';
+import { OVERTIME_REPORT_ACTION_MAP } from '../../types/pagePermissions';
 import * as XLSX from 'xlsx';
 import { 
   FileSpreadsheet, 
@@ -248,15 +249,42 @@ export const OvertimeReportsTab: React.FC = () => {
   }, [overtimeRequests, overtimeAttendances, overtimeRecords, attendanceRecords, monthFilter]);
 
   // List of 7 reports requested
-  const reportsList = [
-    { id: 1, name: 'Employee-wise Monthly Overtime Report', icon: Users, desc: 'Aggregated monthly overtime hours, wage rates, and earnings per worker' },
-    { id: 2, name: 'Daily Factory Overtime Bill Report', icon: Building2, desc: 'Daily Overtime Bill Factory sheet with 31-day breakdown, rates & signatures' },
-    { id: 3, name: 'Production Batch-wise Overtime Cost Report', icon: Layers, desc: 'Direct OT cost absorbed per manufactured battery batch' },
-    { id: 4, name: 'Production Order-wise Overtime Cost Report', icon: FileText, desc: 'Overtime expense absorbed per Production Work Order' },
-    { id: 5, name: 'Monthly Overtime Payroll Reconciliation Report', icon: Coins, desc: 'Payable overtime amounts audited against salary sheets' },
-    { id: 6, name: 'Pending Overtime Approval Workflow Report', icon: Clock, desc: 'Bottlenecks and requests awaiting Supervisor, Production Mgr, or HR sign-off' },
-    { id: 7, name: 'Overtime Hours vs Production Output Report', icon: TrendingUp, desc: 'Efficiency ratio of overtime input hours to finished goods units produced' },
-  ];
+  const reportsList = useMemo(
+    () => [
+      { id: 1, permissionKey: OVERTIME_REPORT_ACTION_MAP[1].key, name: 'Employee-wise Monthly Overtime Report', icon: Users, desc: 'Aggregated monthly overtime hours, wage rates, and earnings per worker' },
+      { id: 2, permissionKey: OVERTIME_REPORT_ACTION_MAP[2].key, name: 'Daily Factory Overtime Bill Report', icon: Building2, desc: 'Daily Overtime Bill Factory sheet with 31-day breakdown, rates & signatures' },
+      { id: 3, permissionKey: OVERTIME_REPORT_ACTION_MAP[3].key, name: 'Production Batch-wise Overtime Cost Report', icon: Layers, desc: 'Direct OT cost absorbed per manufactured battery batch' },
+      { id: 4, permissionKey: OVERTIME_REPORT_ACTION_MAP[4].key, name: 'Production Order-wise Overtime Cost Report', icon: FileText, desc: 'Overtime expense absorbed per Production Work Order' },
+      { id: 5, permissionKey: OVERTIME_REPORT_ACTION_MAP[5].key, name: 'Monthly Overtime Payroll Reconciliation Report', icon: Coins, desc: 'Payable overtime amounts audited against salary sheets' },
+      { id: 6, permissionKey: OVERTIME_REPORT_ACTION_MAP[6].key, name: 'Pending Overtime Approval Workflow Report', icon: Clock, desc: 'Bottlenecks and requests awaiting Supervisor, Production Mgr, or HR sign-off' },
+      { id: 7, permissionKey: OVERTIME_REPORT_ACTION_MAP[7].key, name: 'Overtime Hours vs Production Output Report', icon: TrendingUp, desc: 'Efficiency ratio of overtime input hours to finished goods units produced' },
+    ],
+    []
+  );
+
+  const visibleReports = useMemo(
+    () =>
+      reportsList.filter((rep) =>
+        canViewPage &&
+        (hasPageAction
+          ? hasPageAction('overtime-management', rep.permissionKey)
+          : currentUser.role === 'Super Admin')
+      ),
+    [reportsList, canViewPage, hasPageAction, currentUser.role]
+  );
+
+  const activeReportDef = useMemo(
+    () => visibleReports.find((r) => r.id === activeReport) || visibleReports[0] || null,
+    [visibleReports, activeReport]
+  );
+
+  const effectiveActiveReport = activeReportDef ? activeReportDef.id : 0;
+
+  useEffect(() => {
+    if (visibleReports.length > 0 && !visibleReports.some((r) => r.id === activeReport)) {
+      setActiveReport(visibleReports[0].id);
+    }
+  }, [visibleReports, activeReport]);
 
   const stripDepartmentCode = (raw: string): string => {
     let result = String(raw || '').trim();
@@ -400,12 +428,12 @@ export const OvertimeReportsTab: React.FC = () => {
   );
 
   useEffect(() => {
-    if (activeReport === 2 && employeeFilter !== 'all') {
+    if (effectiveActiveReport === 2 && employeeFilter !== 'all') {
       if (!isEmployeeActive(selectedEmployeeFilterObj)) {
         setEmployeeFilter('all');
       }
     }
-  }, [activeReport, employeeFilter, selectedEmployeeFilterObj]);
+  }, [effectiveActiveReport, employeeFilter, selectedEmployeeFilterObj]);
 
   const normalizedSelectedEmpTypes = useMemo(
     () => employmentTypeFilters.map((t) => normStr(t)),
@@ -870,11 +898,11 @@ export const OvertimeReportsTab: React.FC = () => {
 
   // Helper to export any dataset to Excel
   const exportToExcel = (data: any[], fileName: string) => {
-    if (!canExport) return;
-    if (activeReport === 2) {
+    if (!canExport || !activeReportDef) return;
+    if (effectiveActiveReport === 2) {
       const sheetRows: any[][] = [];
       sheetRows.push([companyDisplayName]);
-      sheetRows.push(['Daily Overtime Bill Factory']);
+      sheetRows.push(['Daily Overtime Bill of Factory']);
       sheetRows.push([`For the month of ${monthHeadingLabel}`]);
       sheetRows.push([
         '', '', '', '', '', '', '', '', '',
@@ -964,7 +992,7 @@ export const OvertimeReportsTab: React.FC = () => {
   };
 
   const handlePrintDeptBill = () => {
-    if (!canExport) return;
+    if (!canExport || effectiveActiveReport !== 2) return;
     document.body.classList.add('printing-ot-bill');
     const cleanup = () => {
       document.body.classList.remove('printing-ot-bill');
@@ -1142,15 +1170,15 @@ export const OvertimeReportsTab: React.FC = () => {
 
   // Current active report data (for reports 1, 3-7)
   const currentData = 
-    activeReport === 1 ? generateEmployeeReport() :
-    activeReport === 3 ? generateBatchReport() :
-    activeReport === 4 ? generateOrderReport() :
-    activeReport === 5 ? generatePayrollReport() :
-    activeReport === 6 ? generatePendingReport() :
-    activeReport === 7 ? generateEfficiencyReport() :
+    effectiveActiveReport === 1 ? generateEmployeeReport() :
+    effectiveActiveReport === 3 ? generateBatchReport() :
+    effectiveActiveReport === 4 ? generateOrderReport() :
+    effectiveActiveReport === 5 ? generatePayrollReport() :
+    effectiveActiveReport === 6 ? generatePendingReport() :
+    effectiveActiveReport === 7 ? generateEfficiencyReport() :
     [];
 
-  if (!canViewPage) {
+  if (!canViewPage || !activeReportDef) {
     return (
       <div className="p-8 max-w-md mx-auto mt-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm text-center space-y-3">
         <div className="w-12 h-12 mx-auto rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 flex items-center justify-center">
@@ -1160,7 +1188,15 @@ export const OvertimeReportsTab: React.FC = () => {
           Reports &amp; Export Access Restricted
         </h2>
         <p className="text-xs text-slate-500 leading-relaxed">
-          Your account lacks <strong>Reports &amp; Export</strong> page permission under Overtime Management Hub. Contact your administrator to grant access.
+          {!canViewPage ? (
+            <>
+              Your account lacks <strong>Reports &amp; Export</strong> page permission under Overtime Management Hub. Contact your administrator to grant access.
+            </>
+          ) : (
+            <>
+              No individual Overtime Reports are currently enabled for your account. Contact your administrator under <strong>Users &amp; Permissions</strong> to grant report access.
+            </>
+          )}
         </p>
       </div>
     );
@@ -1182,7 +1218,7 @@ export const OvertimeReportsTab: React.FC = () => {
 
         {canExport && (
           <div className="flex items-center gap-2">
-            {activeReport === 2 && (
+            {effectiveActiveReport === 2 && (
               <button
                 type="button"
                 onClick={handlePrintDeptBill}
@@ -1193,7 +1229,7 @@ export const OvertimeReportsTab: React.FC = () => {
               </button>
             )}
             <button
-              onClick={() => exportToExcel(currentData, reportsList[activeReport - 1].name.replace(/\s+/g, '_'))}
+              onClick={() => exportToExcel(currentData, activeReportDef.name.replace(/\s+/g, '_'))}
               className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-xs font-semibold shadow-sm transition-colors"
             >
               <Download className="w-4 h-4" />
@@ -1205,9 +1241,9 @@ export const OvertimeReportsTab: React.FC = () => {
 
       {/* Reports Grid Selector */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 print:hidden">
-        {reportsList.map((rep) => {
+        {visibleReports.map((rep) => {
           const Icon = rep.icon;
-          const isActive = activeReport === rep.id;
+          const isActive = effectiveActiveReport === rep.id;
           return (
             <button
               key={rep.id}
@@ -1333,7 +1369,7 @@ export const OvertimeReportsTab: React.FC = () => {
           >
             <option value="all">All Employees</option>
             {fieldForceReps
-              .filter((r) => activeReport !== 2 || isEmployeeActive(r))
+              .filter((r) => effectiveActiveReport !== 2 || isEmployeeActive(r))
               .map(r => (
                 <option key={r.id} value={r.id}>{r.name} ({r.code || r.id})</option>
               ))}
@@ -1368,7 +1404,7 @@ export const OvertimeReportsTab: React.FC = () => {
       </div>
 
       {/* Report 2: Exact Screenshot-Style Daily Overtime Bill Factory Sheet */}
-      {activeReport === 2 ? (
+      {effectiveActiveReport === 2 ? (
         <div
           id="dept-ot-bill-sheet"
           className="bg-white text-black rounded-xl border border-slate-300 shadow-sm p-4 font-serif print:border-none print:shadow-none print:p-0"
@@ -1379,7 +1415,7 @@ export const OvertimeReportsTab: React.FC = () => {
               {companyDisplayName}
             </div>
             <div className="text-[12px] font-bold">
-              Daily Overtime Bill Factory
+              Daily Overtime Bill of Factory
             </div>
           </div>
 
@@ -1568,7 +1604,7 @@ export const OvertimeReportsTab: React.FC = () => {
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
             <div className="flex items-center gap-2">
-              <span className="font-bold text-sm text-slate-900">{reportsList[activeReport - 1].name}</span>
+              <span className="font-bold text-sm text-slate-900">{activeReportDef.name}</span>
               <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-mono">
                 {currentData.length} Records
               </span>

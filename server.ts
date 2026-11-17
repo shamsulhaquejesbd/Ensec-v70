@@ -35,6 +35,7 @@ import {
   sanitizeProductionOrderForUser,
 } from './src/lib/manufacturingPermissions.ts';
 import {
+  authorizeOvertimeReport,
   authorizeOvertimeSubPage,
   resolveOvertimePermissions,
   sanitizeOvertimeRecordForUser,
@@ -2038,12 +2039,17 @@ export function createAppServer() {
 
   app.get('/api/overtime/reports', async (req, res) => {
     const caller = await resolveRequestUser(req);
-    const auth = authorizeOvertimeSubPage(caller, 'reports');
+    const requestedReport = req.query?.reportKey || req.query?.reportId;
+    const auth = authorizeOvertimeReport(
+      caller,
+      typeof requestedReport === 'string' ? requestedReport : undefined
+    );
     if (!auth.allowed) {
       return res.status(caller ? 403 : 401).json({ allowed: false, code: 'OVERTIME_REPORTS_FORBIDDEN', error: auth.reason });
     }
+    const permissions = resolveOvertimePermissions(caller);
     const requests = (await loadAuthoritativeOvertimeRequests()).map((r) => sanitizeOvertimeRecordForUser(r, caller));
-    res.json({ allowed: true, requests });
+    res.json({ allowed: true, permissions, requests });
   });
 
   // Authenticated Mobile Field Force Transaction Endpoints (Enforces active ERP User <-> Employee Identity)
