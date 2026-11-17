@@ -139,12 +139,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Keep all sidebar dropdown menus collapsed by default; open only upon user click
   const [dropdownsOpen, setDropdownsOpen] = useState<{ [id: string]: boolean }>({});
 
-  // Scrollbar mode: 'slim' (auto-hiding slim scrollbar) or 'hidden' (completely hidden)
+  // Scrollbar mode: 'hidden' (completely hidden by default) or 'slim' (auto-hiding slim scrollbar)
   const [isScrollbarHidden, setIsScrollbarHidden] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('ensec_hide_sidebar_scrollbar') === 'true';
+      const saved = localStorage.getItem('ensec_hide_sidebar_scrollbar');
+      if (saved === null) return true;
+      return saved === 'true';
     } catch {
-      return false;
+      return true;
     }
   });
 
@@ -489,21 +491,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
-            <button
-              onClick={toggleScrollbarVisibility}
-              className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                isScrollbarHidden
-                  ? 'border-blue-500/40 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-                  : 'border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-              }`}
-              title={
-                isScrollbarHidden
-                  ? 'Scrollbar: Hidden (Click for slim auto-hide scrollbar)'
-                  : 'Scrollbar: Slim auto-hide (Click to hide scrollbar completely)'
-              }
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-            </button>
+            
             {canViewCollectionNotifications && (
               <button
                 onClick={() => setShowNotifDrawer(true)}
