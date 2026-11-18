@@ -609,3 +609,71 @@ DROP POLICY IF EXISTS "Allow public all payroll_settings" ON public.payroll_sett
 CREATE POLICY "Allow public all payroll_settings" ON public.payroll_settings FOR ALL USING (true) WITH CHECK (true);
 
 GRANT ALL ON public.payroll_settings TO postgres, anon, authenticated, service_role;`;
+
+export interface AttendanceDbStatus {
+  synced: boolean;
+  status: 'synced' | 'rls_blocked' | 'table_missing' | 'error' | 'not_configured' | 'unknown';
+  error?: string | null;
+  sqlFix?: string | null;
+}
+
+export const EMPLOYEE_ATTENDANCES_TABLE_SQL = `-- Run this in your Supabase SQL Editor to enable saving Daily Attendance Check In & Check Out directly to employee_attendances:
+CREATE TABLE IF NOT EXISTS public.employee_attendances (
+  id TEXT PRIMARY KEY,
+  employee_id TEXT NOT NULL,
+  employee_code TEXT NOT NULL DEFAULT '',
+  employee_name TEXT NOT NULL,
+  department TEXT,
+  designation TEXT,
+  date DATE NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Present',
+  in_time TEXT,
+  out_time TEXT,
+  overtime_hours NUMERIC(5, 2) DEFAULT 0.00,
+  work_hours NUMERIC(5, 2) DEFAULT 0.00,
+  late_duration_minutes INT DEFAULT 0,
+  gps_validation_status TEXT DEFAULT 'Manual',
+  remarks TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT uq_emp_date UNIQUE (employee_id, date)
+);
+
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS department TEXT;
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS designation TEXT;
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS assigned_office_id TEXT;
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS assigned_office_name TEXT;
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS office_latitude NUMERIC(10, 7);
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS office_longitude NUMERIC(10, 7);
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS allowed_radius_meters INT DEFAULT 200;
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS check_in_latitude NUMERIC(10, 7);
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS check_in_longitude NUMERIC(10, 7);
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS check_in_distance_meters NUMERIC(10, 2);
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS check_in_gps_accuracy_meters NUMERIC(10, 2);
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS check_in_location_text TEXT;
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS check_out_latitude NUMERIC(10, 7);
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS check_out_longitude NUMERIC(10, 7);
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS check_out_distance_meters NUMERIC(10, 2);
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS check_out_gps_accuracy_meters NUMERIC(10, 2);
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS check_out_location_text TEXT;
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS work_hours NUMERIC(5, 2) DEFAULT 0.00;
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS late_duration_minutes INT DEFAULT 0;
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS gps_validation_status TEXT DEFAULT 'Manual';
+ALTER TABLE public.employee_attendances ADD COLUMN IF NOT EXISTS validation_reason TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'uq_emp_date' AND conrelid = 'public.employee_attendances'::regclass
+  ) THEN
+    ALTER TABLE public.employee_attendances ADD CONSTRAINT uq_emp_date UNIQUE (employee_id, date);
+  END IF;
+END $$;
+
+ALTER TABLE public.employee_attendances ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public all employee_attendances" ON public.employee_attendances;
+CREATE POLICY "Allow public all employee_attendances" ON public.employee_attendances FOR ALL USING (true) WITH CHECK (true);
+
+GRANT ALL ON public.employee_attendances TO postgres, anon, authenticated, service_role;`;
+

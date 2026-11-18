@@ -218,6 +218,8 @@ import {
   SALARY_STRUCTURES_TABLE_SQL,
   PayrollSettingsDbStatus,
   PAYROLL_SETTINGS_TABLE_SQL,
+  AttendanceDbStatus,
+  EMPLOYEE_ATTENDANCES_TABLE_SQL,
 } from '../types/payroll.ts';
 import {
   DEFAULT_OFFICE_LOCATIONS,
@@ -751,10 +753,34 @@ interface ERPContextType {
   refreshOfficeLocations?: () => Promise<void>;
 
   attendanceRecords: AttendanceRecord[];
+  attendanceDbStatus: AttendanceDbStatus;
+  refreshAttendanceData: () => Promise<void>;
+  syncAttendanceToSupabase: () => Promise<{
+    success: boolean;
+    dbSynced: boolean;
+    syncedCount: number;
+    backedUp?: boolean;
+    error?: string;
+    sqlFix?: string;
+  }>;
   rejectedAttendanceAttempts: RejectedAttendanceAttempt[];
   recordRejectedAttendanceAttempt: (attempt: Omit<RejectedAttendanceAttempt, 'id' | 'createdAt'>) => void;
-  markAttendance: (record: any) => string;
-  bulkMarkAttendance: (records: any, extra?: any) => void;
+  markAttendance: (record: any) => Promise<{
+    success: boolean;
+    id: string;
+    dbSynced: boolean;
+    backedUp?: boolean;
+    error?: string;
+    sqlFix?: string;
+  }>;
+  bulkMarkAttendance: (records: any, extra?: any) => Promise<{
+    success: boolean;
+    dbSynced: boolean;
+    syncedCount: number;
+    backedUp?: boolean;
+    error?: string;
+    sqlFix?: string;
+  }>;
   submitGpsCheckIn: (params: {
     employee: FieldForceRep;
     latitude: number;
@@ -2428,6 +2454,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [attendanceDbStatus, setAttendanceDbStatus] = useState<AttendanceDbStatus>({
+    synced: false,
+    status: 'unknown',
+    error: null,
+    sqlFix: null,
+  });
 
   const [rejectedAttendanceAttempts, setRejectedAttendanceAttempts] = useState<RejectedAttendanceAttempt[]>([]);
 
@@ -4649,105 +4681,440 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const refreshAttendanceData = async () => {
+  const classifyAttendanceSupabaseError = (err: any): AttendanceDbStatus => {
+    const code = String(err?.code || '').trim();
+    const message = String(err?.message || '').trim();
+    const lower = message.toLowerCase();
+    if (
+      code === 'PGRST205' ||
+      code === '42P01' ||
+      lower.includes('could not find the table') ||
+      lower.includes('does not exist')
+    ) {
+      return {
+        synced: false,
+        status: 'table_missing',
+        error: 'Supabase table "public.employee_attendances" does not exist yet.',
+        sqlFix: EMPLOYEE_ATTENDANCES_TABLE_SQL,
+      };
+    }
+    if (
+      code === '42501' ||
+      lower.includes('row-level security') ||
+      lower.includes('permission denied')
+    ) {
+      return {
+        synced: false,
+        status: 'rls_blocked',
+        error: `Supabase Row-Level Security blocked saving to "public.employee_attendances": ${message}`,
+        sqlFix: EMPLOYEE_ATTENDANCES_TABLE_SQL,
+      };
+    }
+    return {
+      synced: false,
+      status: 'error',
+      error: message || 'Failed to communicate with Supabase employee_attendances table.',
+      sqlFix: EMPLOYEE_ATTENDANCES_TABLE_SQL,
+    };
+  };
+
+  const buildAttendanceUpsertPayload = (rec: AttendanceRecord): Record<string, any> => ({
+    id: rec.id,
+    employee_id: rec.employeeId || rec.fieldForceId || '',
+    employee_code: rec.employeeCode || '',
+    employee_name: rec.employeeName,
+    department: rec.department || null,
+    designation: rec.designation || null,
+    date: rec.date,
+    status: rec.status,
+    in_time: rec.inTime || rec.checkInTime || null,
+    out_time: rec.outTime || rec.checkOutTime || null,
+    overtime_hours: Number(rec.overtimeHours) || 0,
+    work_hours: Number(rec.workHours) || 0,
+    late_duration_minutes: Number(rec.lateDurationMinutes ?? rec.lateMinutes ?? 0) || 0,
+    assigned_office_id: rec.assignedOfficeId || null,
+    assigned_office_name: rec.assignedOfficeName || null,
+    office_latitude: rec.officeLatitude ?? null,
+    office_longitude: rec.officeLongitude ?? null,
+    allowed_radius_meters: rec.allowedRadiusMeters ?? DEFAULT_ALLOWED_RADIUS_METERS,
+    check_in_latitude: rec.checkInLatitude ?? null,
+    check_in_longitude: rec.checkInLongitude ?? null,
+    check_in_distance_meters: rec.checkInDistanceMeters ?? null,
+    check_in_gps_accuracy_meters: rec.checkInGpsAccuracyMeters ?? null,
+    check_in_location_text: rec.checkInLocationText || null,
+    check_out_latitude: rec.checkOutLatitude ?? null,
+    check_out_longitude: rec.checkOutLongitude ?? null,
+    check_out_distance_meters: rec.checkOutDistanceMeters ?? null,
+    check_out_gps_accuracy_meters: rec.checkOutGpsAccuracyMeters ?? null,
+    check_out_location_text: rec.checkOutLocationText || null,
+    gps_validation_status: rec.gpsValidationStatus || 'Manual',
+    validation_reason: rec.validationReason || null,
+    remarks: rec.remarks || null,
+    updated_at: rec.updatedAt || new Date().toISOString(),
+  });
+
+  const persistAttendanceRecordsToSupabase = async (
+    recordsToSave: AttendanceRecord[],
+    allSnapshotForBackup?: AttendanceRecord[]
+  ): Promise<{
+    dbSynced: boolean;
+    backedUp?: boolean;
+    syncedCount: number;
+    error?: string;
+    sqlFix?: string;
+    dbStatus: AttendanceDbStatus;
+  }> => {
     const sb = getSupabase();
-    if (sb) {
-      try {
-        const { data, error } = await sb
+    if (!sb) {
+      const notCfg: AttendanceDbStatus = {
+        synced: false,
+        status: 'not_configured',
+        error: 'Supabase client is not configured.',
+        sqlFix: null,
+      };
+      setAttendanceDbStatus(notCfg);
+      return {
+        dbSynced: false,
+        syncedCount: 0,
+        error: notCfg.error || undefined,
+        dbStatus: notCfg,
+      };
+    }
+
+    const validRecords = recordsToSave.filter((r) => Boolean((r.employeeId || r.fieldForceId) && r.date));
+    if (validRecords.length === 0) {
+      return {
+        dbSynced: true,
+        syncedCount: 0,
+        dbStatus: { synced: true, status: 'synced', error: null, sqlFix: null },
+      };
+    }
+
+    try {
+      let workingPayloads = validRecords.map(buildAttendanceUpsertPayload);
+      let lastError: any = null;
+
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const { error } = await sb
           .from('employee_attendances')
-          .select('*')
-          .order('date', { ascending: false });
-        if (!error && Array.isArray(data) && data.length > 0) {
-          const mapped: AttendanceRecord[] = data.map((row: any) => ({
-            id: String(row.id),
-            fieldForceId: row.employee_id ? String(row.employee_id) : undefined,
-            employeeId: row.employee_id ? String(row.employee_id) : undefined,
-            employeeCode: row.employee_code || undefined,
-            employeeName: row.employee_name || 'Employee',
-            department: row.department || undefined,
-            designation: row.designation || undefined,
-            date: String(row.date),
-            status: (row.status || 'Present') as AttendanceStatus,
-            inTime: row.in_time || undefined,
-            checkInTime: row.in_time || undefined,
-            outTime: row.out_time || undefined,
-            checkOutTime: row.out_time || undefined,
-            workHours: row.work_hours !== null && row.work_hours !== undefined ? Number(row.work_hours) : undefined,
-            overtimeHours: Number(row.overtime_hours) || 0,
-            lateDurationMinutes: Number(row.late_duration_minutes) || 0,
-            lateMinutes: Number(row.late_duration_minutes) || 0,
-            isLate: (Number(row.late_duration_minutes) || 0) > 0 || row.status === 'Late',
-            assignedOfficeId: row.assigned_office_id || undefined,
-            assignedOfficeName: row.assigned_office_name || undefined,
-            officeLatitude: row.office_latitude !== null && row.office_latitude !== undefined ? Number(row.office_latitude) : undefined,
-            officeLongitude: row.office_longitude !== null && row.office_longitude !== undefined ? Number(row.office_longitude) : undefined,
-            allowedRadiusMeters: row.allowed_radius_meters !== null && row.allowed_radius_meters !== undefined ? Number(row.allowed_radius_meters) : undefined,
-            checkInLatitude: row.check_in_latitude !== null && row.check_in_latitude !== undefined ? Number(row.check_in_latitude) : undefined,
-            checkInLongitude: row.check_in_longitude !== null && row.check_in_longitude !== undefined ? Number(row.check_in_longitude) : undefined,
-            checkInDistanceMeters: row.check_in_distance_meters !== null && row.check_in_distance_meters !== undefined ? Number(row.check_in_distance_meters) : undefined,
-            checkInGpsAccuracyMeters: row.check_in_gps_accuracy_meters !== null && row.check_in_gps_accuracy_meters !== undefined ? Number(row.check_in_gps_accuracy_meters) : undefined,
-            checkInLocationText: row.check_in_location_text || undefined,
-            checkOutLatitude: row.check_out_latitude !== null && row.check_out_latitude !== undefined ? Number(row.check_out_latitude) : undefined,
-            checkOutLongitude: row.check_out_longitude !== null && row.check_out_longitude !== undefined ? Number(row.check_out_longitude) : undefined,
-            checkOutDistanceMeters: row.check_out_distance_meters !== null && row.check_out_distance_meters !== undefined ? Number(row.check_out_distance_meters) : undefined,
-            checkOutGpsAccuracyMeters: row.check_out_gps_accuracy_meters !== null && row.check_out_gps_accuracy_meters !== undefined ? Number(row.check_out_gps_accuracy_meters) : undefined,
-            checkOutLocationText: row.check_out_location_text || undefined,
-            gpsValidationStatus: (row.gps_validation_status || 'Manual') as GPSValidationStatus,
-            validationReason: row.validation_reason || undefined,
-            remarks: row.remarks || undefined,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-          }));
-          setAttendanceRecords((prev) => {
-            const map = new Map<string, AttendanceRecord>();
-            prev.forEach((r) => map.set(`${r.employeeId}_${r.date}`, r));
-            mapped.forEach((r) => map.set(`${r.employeeId}_${r.date}`, r));
-            return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
-          });
+          .upsert(workingPayloads, { onConflict: 'employee_id,date' });
+
+        if (!error) {
+          const okStatus: AttendanceDbStatus = {
+            synced: true,
+            status: 'synced',
+            error: null,
+            sqlFix: null,
+          };
+          setAttendanceDbStatus(okStatus);
+          return {
+            dbSynced: true,
+            backedUp: false,
+            syncedCount: validRecords.length,
+            dbStatus: okStatus,
+          };
         }
-      } catch {
-        // Ignore if table columns pending migration
+
+        lastError = error;
+        const msg = String(error.message || '');
+        let missingCol: string | null = null;
+        if (error.code === 'PGRST204' || msg.includes('schema cache')) {
+          missingCol = msg.match(/Could not find the '([^']+)' column/i)?.[1] || null;
+        } else if (error.code === '42703' || msg.toLowerCase().includes('does not exist')) {
+          missingCol =
+            msg.match(/column\s+"([^"]+)"/i)?.[1] ||
+            msg.match(/column\s+(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)/i)?.[1] ||
+            null;
+        }
+        if (missingCol && Object.prototype.hasOwnProperty.call(workingPayloads[0], missingCol)) {
+          workingPayloads = workingPayloads.map((p) => {
+            const copy = { ...p };
+            delete copy[missingCol!];
+            return copy;
+          });
+          continue;
+        }
+        break;
       }
 
+      const primaryStatus = classifyAttendanceSupabaseError(lastError);
+      let backedUp = false;
       try {
-        const { data: rejData, error: rejErr } = await sb
-          .from('attendance_rejected_attempts')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(200);
-        if (!rejErr && Array.isArray(rejData) && rejData.length > 0) {
-          const mappedRej: RejectedAttendanceAttempt[] = rejData.map((row: any) => ({
-            id: String(row.id),
-            employeeId: String(row.employee_id),
-            employeeCode: row.employee_code || undefined,
-            employeeName: row.employee_name || 'Employee',
-            department: row.department || undefined,
-            designation: row.designation || undefined,
-            assignedOfficeId: row.assigned_office_id || undefined,
-            assignedOfficeName: row.assigned_office_name || undefined,
-            officeLatitude: row.office_latitude !== null ? Number(row.office_latitude) : undefined,
-            officeLongitude: row.office_longitude !== null ? Number(row.office_longitude) : undefined,
-            allowedRadiusMeters: Number(row.allowed_radius_meters) || DEFAULT_ALLOWED_RADIUS_METERS,
-            attemptType: row.attempt_type === 'Check Out' ? 'Check Out' : 'Check In',
-            attendanceDate: String(row.attendance_date),
-            attemptTime: String(row.attempt_time),
-            latitude: row.latitude !== null ? Number(row.latitude) : undefined,
-            longitude: row.longitude !== null ? Number(row.longitude) : undefined,
-            distanceMeters: row.distance_meters !== null ? Number(row.distance_meters) : undefined,
-            gpsAccuracyMeters: row.gps_accuracy_meters !== null ? Number(row.gps_accuracy_meters) : undefined,
-            gpsValidationStatus: 'Rejected',
-            rejectionReason: row.rejection_reason || 'Outside permitted geofence',
-            deviceInfo: row.device_info || undefined,
-            createdAt: row.created_at || new Date().toISOString(),
-          }));
-          setRejectedAttendanceAttempts((prev) => {
-            const seen = new Set(mappedRej.map((m) => m.id));
-            return [...mappedRej, ...prev.filter((p) => !seen.has(p.id))].slice(0, 300);
-          });
-        }
+        const { data: existingBackupRow } = await sb
+          .from('system_settings')
+          .select('settings_json')
+          .eq('id', 'employee_attendances')
+          .maybeSingle();
+
+        const existingBackupList: AttendanceRecord[] = Array.isArray(
+          (existingBackupRow?.settings_json as any)?.records
+        )
+          ? ((existingBackupRow!.settings_json as any).records as AttendanceRecord[])
+          : [];
+
+        const mergedMap = new Map<string, AttendanceRecord>();
+        existingBackupList.forEach((r) => {
+          const key = `${r.employeeId || r.fieldForceId}_${r.date}`;
+          if (key) mergedMap.set(key, r);
+        });
+        (allSnapshotForBackup || []).forEach((r) => {
+          const key = `${r.employeeId || r.fieldForceId}_${r.date}`;
+          if (key) mergedMap.set(key, r);
+        });
+        validRecords.forEach((r) => {
+          const key = `${r.employeeId || r.fieldForceId}_${r.date}`;
+          if (key) mergedMap.set(key, r);
+        });
+
+        const mergedList = Array.from(mergedMap.values())
+          .sort((a, b) => b.date.localeCompare(a.date))
+          .slice(0, 1500);
+
+        const { error: backupErr } = await sb.from('system_settings').upsert(
+          {
+            id: 'employee_attendances',
+            software_name: 'Employee Attendances',
+            logo_data_url: null,
+            branding_json: { type: 'employee_attendances' },
+            settings_json: { records: mergedList },
+            updated_by: currentUser?.name || 'Admin',
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        );
+        backedUp = !backupErr;
       } catch {
-        // Ignore if table not yet created
+        backedUp = false;
       }
+
+      setAttendanceDbStatus(primaryStatus);
+      console.warn('[Attendance] public.employee_attendances write blocked; SQL policy required:', lastError);
+      return {
+        dbSynced: false,
+        backedUp,
+        syncedCount: 0,
+        error: backedUp
+          ? 'Backed up in system_settings, but Supabase Row-Level Security blocked writing directly to "public.employee_attendances". Run the SQL fix below once in Supabase SQL Editor, then click Sync to Supabase.'
+          : primaryStatus.error || lastError?.message || 'Failed to save attendance to Supabase.',
+        sqlFix: primaryStatus.sqlFix || EMPLOYEE_ATTENDANCES_TABLE_SQL,
+        dbStatus: primaryStatus,
+      };
+    } catch (err: any) {
+      const failStatus = classifyAttendanceSupabaseError(err);
+      setAttendanceDbStatus(failStatus);
+      console.warn('[Attendance] Supabase save exception:', err);
+      return {
+        dbSynced: false,
+        backedUp: false,
+        syncedCount: 0,
+        error: failStatus.error || err?.message || 'Network error while saving attendance.',
+        sqlFix: failStatus.sqlFix || EMPLOYEE_ATTENDANCES_TABLE_SQL,
+        dbStatus: failStatus,
+      };
+    }
+  };
+
+  const refreshAttendanceData = async () => {
+    const sb = getSupabase();
+    if (!sb) {
+      setAttendanceDbStatus({
+        synced: false,
+        status: 'not_configured',
+        error: 'Supabase client is not configured.',
+        sqlFix: null,
+      });
+      return;
+    }
+
+    try {
+      const [primaryRes, fallbackRes] = await Promise.all([
+        sb.from('employee_attendances').select('*').order('date', { ascending: false }),
+        sb
+          .from('system_settings')
+          .select('id, settings_json, updated_at')
+          .eq('id', 'employee_attendances')
+          .maybeSingle(),
+      ]);
+
+      const primaryRows: AttendanceRecord[] =
+        !primaryRes.error && Array.isArray(primaryRes.data)
+          ? primaryRes.data.map((row: any) => ({
+              id: String(row.id),
+              fieldForceId: row.employee_id ? String(row.employee_id) : undefined,
+              employeeId: row.employee_id ? String(row.employee_id) : undefined,
+              employeeCode: row.employee_code || undefined,
+              employeeName: row.employee_name || 'Employee',
+              department: row.department || undefined,
+              designation: row.designation || undefined,
+              date: String(row.date),
+              status: (row.status || 'Present') as AttendanceStatus,
+              inTime: row.in_time || undefined,
+              checkInTime: row.in_time || undefined,
+              outTime: row.out_time || undefined,
+              checkOutTime: row.out_time || undefined,
+              workHours:
+                row.work_hours !== null && row.work_hours !== undefined
+                  ? Number(row.work_hours)
+                  : undefined,
+              overtimeHours: Number(row.overtime_hours) || 0,
+              lateDurationMinutes: Number(row.late_duration_minutes) || 0,
+              lateMinutes: Number(row.late_duration_minutes) || 0,
+              isLate: (Number(row.late_duration_minutes) || 0) > 0 || row.status === 'Late',
+              assignedOfficeId: row.assigned_office_id || undefined,
+              assignedOfficeName: row.assigned_office_name || undefined,
+              officeLatitude:
+                row.office_latitude !== null && row.office_latitude !== undefined
+                  ? Number(row.office_latitude)
+                  : undefined,
+              officeLongitude:
+                row.office_longitude !== null && row.office_longitude !== undefined
+                  ? Number(row.office_longitude)
+                  : undefined,
+              allowedRadiusMeters:
+                row.allowed_radius_meters !== null && row.allowed_radius_meters !== undefined
+                  ? Number(row.allowed_radius_meters)
+                  : undefined,
+              checkInLatitude:
+                row.check_in_latitude !== null && row.check_in_latitude !== undefined
+                  ? Number(row.check_in_latitude)
+                  : undefined,
+              checkInLongitude:
+                row.check_in_longitude !== null && row.check_in_longitude !== undefined
+                  ? Number(row.check_in_longitude)
+                  : undefined,
+              checkInDistanceMeters:
+                row.check_in_distance_meters !== null && row.check_in_distance_meters !== undefined
+                  ? Number(row.check_in_distance_meters)
+                  : undefined,
+              checkInGpsAccuracyMeters:
+                row.check_in_gps_accuracy_meters !== null &&
+                row.check_in_gps_accuracy_meters !== undefined
+                  ? Number(row.check_in_gps_accuracy_meters)
+                  : undefined,
+              checkInLocationText: row.check_in_location_text || undefined,
+              checkOutLatitude:
+                row.check_out_latitude !== null && row.check_out_latitude !== undefined
+                  ? Number(row.check_out_latitude)
+                  : undefined,
+              checkOutLongitude:
+                row.check_out_longitude !== null && row.check_out_longitude !== undefined
+                  ? Number(row.check_out_longitude)
+                  : undefined,
+              checkOutDistanceMeters:
+                row.check_out_distance_meters !== null &&
+                row.check_out_distance_meters !== undefined
+                  ? Number(row.check_out_distance_meters)
+                  : undefined,
+              checkOutGpsAccuracyMeters:
+                row.check_out_gps_accuracy_meters !== null &&
+                row.check_out_gps_accuracy_meters !== undefined
+                  ? Number(row.check_out_gps_accuracy_meters)
+                  : undefined,
+              checkOutLocationText: row.check_out_location_text || undefined,
+              gpsValidationStatus: (row.gps_validation_status || 'Manual') as GPSValidationStatus,
+              validationReason: row.validation_reason || undefined,
+              remarks: row.remarks || undefined,
+              createdAt: row.created_at,
+              updatedAt: row.updated_at,
+            }))
+          : [];
+
+      const backupRows: AttendanceRecord[] =
+        !fallbackRes.error &&
+        fallbackRes.data?.settings_json &&
+        typeof fallbackRes.data.settings_json === 'object' &&
+        Array.isArray((fallbackRes.data.settings_json as any).records)
+          ? ((fallbackRes.data.settings_json as any).records as AttendanceRecord[])
+          : [];
+
+      const primaryByKey = new Map<string, AttendanceRecord>();
+      primaryRows.forEach((r) => primaryByKey.set(`${r.employeeId || r.fieldForceId}_${r.date}`, r));
+
+      const mergedByKey = new Map<string, AttendanceRecord>(primaryByKey);
+      const pendingMigration: AttendanceRecord[] = [];
+
+      backupRows.forEach((b) => {
+        const key = `${b.employeeId || b.fieldForceId}_${b.date}`;
+        const existingPrimary = primaryByKey.get(key);
+        if (!existingPrimary) {
+          mergedByKey.set(key, b);
+          pendingMigration.push(b);
+        } else {
+          const pTime = existingPrimary.updatedAt ? Date.parse(existingPrimary.updatedAt) : 0;
+          const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+          if (bTime > pTime) {
+            mergedByKey.set(key, b);
+            pendingMigration.push(b);
+          }
+        }
+      });
+
+      const finalMerged = Array.from(mergedByKey.values()).sort((a, b) =>
+        b.date.localeCompare(a.date)
+      );
+
+      if (finalMerged.length > 0) {
+        setAttendanceRecords((prev) => {
+          const map = new Map<string, AttendanceRecord>();
+          prev.forEach((r) => map.set(`${r.employeeId || r.fieldForceId}_${r.date}`, r));
+          finalMerged.forEach((r) => map.set(`${r.employeeId || r.fieldForceId}_${r.date}`, r));
+          return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+        });
+      }
+
+      if (primaryRes.error) {
+        setAttendanceDbStatus(classifyAttendanceSupabaseError(primaryRes.error));
+      } else if (pendingMigration.length > 0) {
+        await persistAttendanceRecordsToSupabase(pendingMigration, finalMerged);
+      } else {
+        setAttendanceDbStatus((prev) =>
+          prev.status === 'rls_blocked' || prev.status === 'table_missing'
+            ? prev
+            : { synced: true, status: 'synced', error: null, sqlFix: null }
+        );
+      }
+    } catch (err: any) {
+      setAttendanceDbStatus(classifyAttendanceSupabaseError(err));
+    }
+
+    try {
+      const { data: rejData, error: rejErr } = await sb
+        .from('attendance_rejected_attempts')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (!rejErr && Array.isArray(rejData) && rejData.length > 0) {
+        const mappedRej: RejectedAttendanceAttempt[] = rejData.map((row: any) => ({
+          id: String(row.id),
+          employeeId: String(row.employee_id),
+          employeeCode: row.employee_code || undefined,
+          employeeName: row.employee_name || 'Employee',
+          department: row.department || undefined,
+          designation: row.designation || undefined,
+          assignedOfficeId: row.assigned_office_id || undefined,
+          assignedOfficeName: row.assigned_office_name || undefined,
+          officeLatitude: row.office_latitude !== null ? Number(row.office_latitude) : undefined,
+          officeLongitude: row.office_longitude !== null ? Number(row.office_longitude) : undefined,
+          allowedRadiusMeters: Number(row.allowed_radius_meters) || DEFAULT_ALLOWED_RADIUS_METERS,
+          attemptType: row.attempt_type === 'Check Out' ? 'Check Out' : 'Check In',
+          attendanceDate: String(row.attendance_date),
+          attemptTime: String(row.attempt_time),
+          latitude: row.latitude !== null ? Number(row.latitude) : undefined,
+          longitude: row.longitude !== null ? Number(row.longitude) : undefined,
+          distanceMeters: row.distance_meters !== null ? Number(row.distance_meters) : undefined,
+          gpsAccuracyMeters: row.gps_accuracy_meters !== null ? Number(row.gps_accuracy_meters) : undefined,
+          gpsValidationStatus: 'Rejected',
+          rejectionReason: row.rejection_reason || 'Outside permitted geofence',
+          deviceInfo: row.device_info || undefined,
+          createdAt: row.created_at || new Date().toISOString(),
+        }));
+        setRejectedAttendanceAttempts((prev) => {
+          const seen = new Set(mappedRej.map((m) => m.id));
+          return [...mappedRej, ...prev.filter((p) => !seen.has(p.id))].slice(0, 300);
+        });
+      }
+    } catch {
+      // Ignore if table not yet created
     }
   };
 
@@ -20112,73 +20479,196 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
-  const markAttendance = (record: Omit<AttendanceRecord, 'id' | 'createdAt' | 'updatedAt'>): string => {
+  const markAttendance = async (
+    record: Omit<AttendanceRecord, 'id' | 'createdAt' | 'updatedAt'>
+  ): Promise<{
+    success: boolean;
+    id: string;
+    dbSynced: boolean;
+    backedUp?: boolean;
+    error?: string;
+    sqlFix?: string;
+  }> => {
     if (!hasPageAction(currentUser, 'payroll', 'create_payroll')) {
       console.warn('Permission denied: create_payroll required to mark or override attendance.');
-      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted manual attendance override without create_payroll permission`);
-      return '';
+      addAuditLog(
+        'PERMISSION_DENIED',
+        'HR & Payroll',
+        `${currentUser?.name || 'User'} attempted manual attendance override without create_payroll permission`
+      );
+      return {
+        success: false,
+        id: '',
+        dbSynced: false,
+        error: 'Permission denied: Process Monthly Payroll permission required.',
+      };
     }
-    const id = `att-${Date.now().toString().slice(-6)}`;
+
+    const existing = attendanceRecords.find(
+      (a) =>
+        (a.employeeId === record.employeeId || a.fieldForceId === record.employeeId) &&
+        a.date === record.date
+    );
+    const id = existing?.id || `att-${record.employeeId || 'emp'}-${record.date}-${Date.now().toString().slice(-4)}`;
     const now = new Date().toISOString();
+    const inVal = record.inTime ?? record.checkInTime;
+    const outVal = record.outTime ?? record.checkOutTime;
     const newRecord: AttendanceRecord = {
+      ...(existing || {}),
       ...record,
       id,
-      gpsValidationStatus: record.gpsValidationStatus || 'Manual',
-      createdAt: now,
+      fieldForceId: record.fieldForceId || record.employeeId,
+      inTime: inVal || undefined,
+      checkInTime: inVal || undefined,
+      outTime: outVal || undefined,
+      checkOutTime: outVal || undefined,
+      gpsValidationStatus: record.gpsValidationStatus || existing?.gpsValidationStatus || 'Manual',
+      createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
-    setAttendanceRecords((prev) => [
+
+    const nextSnapshot = [
       newRecord,
-      ...prev.filter((a) => !(a.employeeId === record.employeeId && a.date === record.date)),
-    ]);
-    const sb = getSupabase();
-    if (sb && record.employeeId) {
-      sb.from('employee_attendances')
-        .upsert(
-          {
-            id: newRecord.id,
-            employee_id: newRecord.employeeId,
-            employee_code: newRecord.employeeCode || '',
-            employee_name: newRecord.employeeName,
-            department: newRecord.department || null,
-            designation: newRecord.designation || null,
-            date: newRecord.date,
-            status: newRecord.status,
-            in_time: newRecord.inTime || newRecord.checkInTime || null,
-            out_time: newRecord.outTime || newRecord.checkOutTime || null,
-            overtime_hours: newRecord.overtimeHours || 0,
-            work_hours: newRecord.workHours || 0,
-            late_duration_minutes: newRecord.lateDurationMinutes ?? newRecord.lateMinutes ?? 0,
-            gps_validation_status: newRecord.gpsValidationStatus || 'Manual',
-            remarks: newRecord.remarks || null,
-            updated_at: now,
-          },
-          { onConflict: 'employee_id,date' }
-        )
-        .then(() => {});
-    }
-    return id;
+      ...attendanceRecords.filter((a) => !(a.employeeId === record.employeeId && a.date === record.date)),
+    ];
+    setAttendanceRecords(nextSnapshot);
+
+    const persistResult = await persistAttendanceRecordsToSupabase([newRecord], nextSnapshot);
+    addAuditLog(
+      'ATTENDANCE_MARKED',
+      'HR & Payroll',
+      `Updated attendance for ${newRecord.employeeName} (${newRecord.date}): ${newRecord.status}${
+        newRecord.inTime ? ` In ${newRecord.inTime}` : ''
+      }${newRecord.outTime ? ` Out ${newRecord.outTime}` : ''}`
+    );
+
+    return {
+      success: true,
+      id,
+      dbSynced: persistResult.dbSynced,
+      backedUp: persistResult.backedUp,
+      error: persistResult.error,
+      sqlFix: persistResult.sqlFix,
+    };
   };
 
-  const bulkMarkAttendance = (records: Omit<AttendanceRecord, 'id' | 'createdAt' | 'updatedAt'>[]) => {
+  const bulkMarkAttendance = async (
+    records: Omit<AttendanceRecord, 'id' | 'createdAt' | 'updatedAt'>[]
+  ): Promise<{
+    success: boolean;
+    dbSynced: boolean;
+    syncedCount: number;
+    backedUp?: boolean;
+    error?: string;
+    sqlFix?: string;
+  }> => {
     if (!hasPageAction(currentUser, 'payroll', 'create_payroll')) {
       console.warn('Permission denied: create_payroll required to bulk mark attendance.');
-      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted bulk attendance marking without create_payroll permission`);
-      return;
+      addAuditLog(
+        'PERMISSION_DENIED',
+        'HR & Payroll',
+        `${currentUser?.name || 'User'} attempted bulk attendance marking without create_payroll permission`
+      );
+      return {
+        success: false,
+        dbSynced: false,
+        syncedCount: 0,
+        error: 'Permission denied: Process Monthly Payroll permission required.',
+      };
     }
+
     const now = new Date().toISOString();
-    const newItems: AttendanceRecord[] = records.map((r, idx) => ({
-      ...r,
-      id: `att-${Date.now()}-${idx}`,
-      gpsValidationStatus: r.gpsValidationStatus || 'Manual',
-      createdAt: now,
-      updatedAt: now,
-    }));
-    setAttendanceRecords((prev) => {
-      const keys = new Set(newItems.map((i) => `${i.employeeId}_${i.date}`));
-      return [...newItems, ...prev.filter((p) => !keys.has(`${p.employeeId}_${p.date}`))];
+    const newItems: AttendanceRecord[] = records.map((r, idx) => {
+      const existing = attendanceRecords.find(
+        (a) => (a.employeeId === r.employeeId || a.fieldForceId === r.employeeId) && a.date === r.date
+      );
+      const inVal = r.inTime ?? r.checkInTime;
+      const outVal = r.outTime ?? r.checkOutTime;
+      return {
+        ...(existing || {}),
+        ...r,
+        id: existing?.id || `att-${Date.now()}-${idx}`,
+        fieldForceId: r.fieldForceId || r.employeeId,
+        inTime: inVal || undefined,
+        checkInTime: inVal || undefined,
+        outTime: outVal || undefined,
+        checkOutTime: outVal || undefined,
+        gpsValidationStatus: r.gpsValidationStatus || existing?.gpsValidationStatus || 'Manual',
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+      };
     });
+
+    const keys = new Set(newItems.map((i) => `${i.employeeId}_${i.date}`));
+    const nextSnapshot = [
+      ...newItems,
+      ...attendanceRecords.filter((p) => !keys.has(`${p.employeeId}_${p.date}`)),
+    ];
+    setAttendanceRecords(nextSnapshot);
+
+    const persistResult = await persistAttendanceRecordsToSupabase(newItems, nextSnapshot);
     addAuditLog('ATTENDANCE_BULK_LOGGED', 'HR & Payroll', `Marked attendance for ${records.length} employees`);
+
+    return {
+      success: true,
+      dbSynced: persistResult.dbSynced,
+      syncedCount: persistResult.syncedCount,
+      backedUp: persistResult.backedUp,
+      error: persistResult.error,
+      sqlFix: persistResult.sqlFix,
+    };
+  };
+
+  const syncAttendanceToSupabase = async (): Promise<{
+    success: boolean;
+    dbSynced: boolean;
+    syncedCount: number;
+    backedUp?: boolean;
+    error?: string;
+    sqlFix?: string;
+  }> => {
+    if (!hasPageAction(currentUser, 'payroll', 'create_payroll')) {
+      return {
+        success: false,
+        dbSynced: false,
+        syncedCount: 0,
+        error: 'Permission denied: Process Monthly Payroll permission required.',
+      };
+    }
+    if (attendanceRecords.length === 0) {
+      await refreshAttendanceData();
+      const sb = getSupabase();
+      if (sb) {
+        const probe = await sb.from('employee_attendances').select('id').limit(1);
+        if (probe.error) {
+          const status = classifyAttendanceSupabaseError(probe.error);
+          setAttendanceDbStatus(status);
+          return {
+            success: false,
+            dbSynced: false,
+            syncedCount: 0,
+            error: status.error || undefined,
+            sqlFix: status.sqlFix || EMPLOYEE_ATTENDANCES_TABLE_SQL,
+          };
+        }
+        setAttendanceDbStatus({ synced: true, status: 'synced', error: null, sqlFix: null });
+      }
+      return {
+        success: true,
+        dbSynced: true,
+        syncedCount: 0,
+      };
+    }
+
+    const persistResult = await persistAttendanceRecordsToSupabase(attendanceRecords, attendanceRecords);
+    return {
+      success: persistResult.dbSynced,
+      dbSynced: persistResult.dbSynced,
+      syncedCount: persistResult.syncedCount,
+      backedUp: persistResult.backedUp,
+      error: persistResult.error,
+      sqlFix: persistResult.sqlFix,
+    };
   };
 
   const submitGpsCheckIn: ERPContextType['submitGpsCheckIn'] = async ({
@@ -20257,10 +20747,16 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       if (data.accepted && data.record) {
         const rec: AttendanceRecord = data.record;
-        setAttendanceRecords((prev) => [
+        const nextSnapshot = [
           rec,
-          ...prev.filter((a) => !(a.employeeId === employee.id && a.date === todayStr)),
-        ]);
+          ...attendanceRecords.filter((a) => !(a.employeeId === employee.id && a.date === todayStr)),
+        ];
+        setAttendanceRecords(nextSnapshot);
+        if (data.dbSynced === false) {
+          await persistAttendanceRecordsToSupabase([rec], nextSnapshot);
+        } else {
+          setAttendanceDbStatus({ synced: true, status: 'synced', error: null, sqlFix: null });
+        }
         updateRepLocation(employee.id, latitude, longitude, `${cfg.assignedOfficeName} (GPS Check-In)`);
         addAuditLog(
           'GPS_CHECK_IN_ACCEPTED',
@@ -20364,10 +20860,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createdAt: nowObj.toISOString(),
         updatedAt: nowObj.toISOString(),
       };
-      setAttendanceRecords((prev) => [
+      const nextSnapshot = [
         rec,
-        ...prev.filter((a) => !(a.employeeId === employee.id && a.date === todayStr)),
-      ]);
+        ...attendanceRecords.filter((a) => !(a.employeeId === employee.id && a.date === todayStr)),
+      ];
+      setAttendanceRecords(nextSnapshot);
+      await persistAttendanceRecordsToSupabase([rec], nextSnapshot);
       return {
         accepted: true,
         distanceMeters: validation.distanceMeters,
@@ -20456,10 +20954,16 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       if (data.accepted && data.record) {
         const updatedRec: AttendanceRecord = data.record;
-        setAttendanceRecords((prev) => [
+        const nextSnapshot = [
           updatedRec,
-          ...prev.filter((a) => !(a.employeeId === employee.id && a.date === todayStr)),
-        ]);
+          ...attendanceRecords.filter((a) => !(a.employeeId === employee.id && a.date === todayStr)),
+        ];
+        setAttendanceRecords(nextSnapshot);
+        if (data.dbSynced === false) {
+          await persistAttendanceRecordsToSupabase([updatedRec], nextSnapshot);
+        } else {
+          setAttendanceDbStatus({ synced: true, status: 'synced', error: null, sqlFix: null });
+        }
         updateRepLocation(employee.id, latitude, longitude, `${cfg.assignedOfficeName} (GPS Check-Out)`);
         addAuditLog(
           'GPS_CHECK_OUT_ACCEPTED',
@@ -20545,10 +21049,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         validationReason: validation.reason,
         updatedAt: nowObj.toISOString(),
       };
-      setAttendanceRecords((prev) => [
+      const nextSnapshot = [
         updatedRec,
-        ...prev.filter((a) => !(a.employeeId === employee.id && a.date === todayStr)),
-      ]);
+        ...attendanceRecords.filter((a) => !(a.employeeId === employee.id && a.date === todayStr)),
+      ];
+      setAttendanceRecords(nextSnapshot);
+      await persistAttendanceRecordsToSupabase([updatedRec], nextSnapshot);
       return {
         accepted: true,
         distanceMeters: validation.distanceMeters,
@@ -23194,6 +23700,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         refreshSalaryStructures,
         syncSalaryStructuresToSupabase,
         attendanceRecords,
+        attendanceDbStatus,
+        refreshAttendanceData,
+        syncAttendanceToSupabase,
         rejectedAttendanceAttempts,
         recordRejectedAttendanceAttempt,
         leaveRecords,

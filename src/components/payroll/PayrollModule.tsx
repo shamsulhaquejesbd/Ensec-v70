@@ -68,6 +68,7 @@ import {
   DEFAULT_MAX_GPS_ACCURACY_METERS,
   DEFAULT_SHIFT_END_TIME,
   DEFAULT_SHIFT_START_TIME,
+  calculateShiftAttendanceStatus,
   formatLateDuration,
   parseTimeToMinutes,
 } from '../../lib/geofence.ts';
@@ -90,6 +91,7 @@ import {
   PayrollSettings,
   SALARY_STRUCTURES_TABLE_SQL,
   PAYROLL_SETTINGS_TABLE_SQL,
+  EMPLOYEE_ATTENDANCES_TABLE_SQL,
 } from '../../types/payroll.ts';
 import { FieldForceRep } from '../../types/erp.ts';
 
@@ -118,6 +120,8 @@ export const PayrollModule: React.FC = () => {
     salaryStructuresDbStatus,
     syncSalaryStructuresToSupabase,
     attendanceRecords,
+    attendanceDbStatus,
+    syncAttendanceToSupabase,
     rejectedAttendanceAttempts,
     leaveRecords,
     advanceLoans,
@@ -194,6 +198,18 @@ export const PayrollModule: React.FC = () => {
   const [attOfficeFilter, setAttOfficeFilter] = useState<string>('All');
   const [attStatusFilter, setAttStatusFilter] = useState<string>('All');
   const [historyEmployee, setHistoryEmployee] = useState<FieldForceRep | null>(null);
+  const [dailyGridDrafts, setDailyGridDrafts] = useState<
+    Record<string, { inTime: string; outTime: string }>
+  >({});
+  const [savingAttendanceRowId, setSavingAttendanceRowId] = useState<string | null>(null);
+  const [isBulkSavingAttendance, setIsBulkSavingAttendance] = useState<boolean>(false);
+  const [isSyncingAttendance, setIsSyncingAttendance] = useState<boolean>(false);
+  const [copiedAttendanceSql, setCopiedAttendanceSql] = useState<boolean>(false);
+  const [attendanceFeedback, setAttendanceFeedback] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+    sqlFix?: string;
+  } | null>(null);
   const [hasUnsavedSettingsChanges, setHasUnsavedSettingsChanges] = useState<boolean>(false);
   const [isSavingPayrollSettings, setIsSavingPayrollSettings] = useState<boolean>(false);
   const [isSyncingPayrollSettings, setIsSyncingPayrollSettings] = useState<boolean>(false);
@@ -1954,48 +1970,254 @@ export const PayrollModule: React.FC = () => {
           {/* SUB-VIEW 2: DAILY ATTENDANCE & BIOMETRIC/ADMIN OVERRIDE GRID */}
           {attSubView === 'daily_grid' && (
             <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                     Daily Attendance & Biometric / Admin Override Grid
                   </h3>
-                  
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Enter or update Check In and Check Out times directly, or use Quick Actions to save to Supabase.
+                  </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {attendanceDbStatus.synced ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/70 text-[10px] font-bold">
+                      <Database className="w-3 h-3" />
+                      Supabase Synced
+                    </span>
+                  ) : attendanceDbStatus.status !== 'unknown' ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/70 text-[10px] font-bold">
+                      <Database className="w-3 h-3" />
+                      {attendanceDbStatus.status === 'rls_blocked'
+                        ? 'Supabase RLS Blocked'
+                        : attendanceDbStatus.status === 'table_missing'
+                        ? 'Supabase Table Missing'
+                        : 'Supabase Sync Needed'}
+                    </span>
+                  ) : null}
+
+                  {canCreatePayroll && (
+                    <button
+                      type="button"
+                      disabled={isSyncingAttendance}
+                      onClick={async () => {
+                        setIsSyncingAttendance(true);
+                        setAttendanceFeedback(null);
+                        const res = await syncAttendanceToSupabase();
+                        setIsSyncingAttendance(false);
+                        if (res.success && res.dbSynced) {
+                          setAttendanceFeedback({
+                            type: 'success',
+                            message: `Synced ${res.syncedCount} attendance record(s) directly to Supabase employee_attendances.`,
+                          });
+                        } else {
+                          setAttendanceFeedback({
+                            type: 'warning',
+                            message:
+                              res.error ||
+                              'Could not sync attendance to Supabase. Run the SQL fix below in Supabase SQL Editor.',
+                            sqlFix: res.sqlFix || EMPLOYEE_ATTENDANCES_TABLE_SQL,
+                          });
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold transition-colors disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isSyncingAttendance ? 'animate-spin' : ''}`} />
+                      <span>{isSyncingAttendance ? 'Syncing...' : 'Sync to Supabase'}</span>
+                    </button>
+                  )}
+
                   <input
                     type="date"
                     value={selectedDateForAtt}
-                    onChange={(e) => setSelectedDateForAtt(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedDateForAtt(e.target.value);
+                      setDailyGridDrafts({});
+                    }}
                     className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold"
                   />
                   {canCreatePayroll && (
                     <button
-                      onClick={() => {
-                        const bulk = fieldForceReps.map((emp) => ({
-                          employeeId: emp.id,
-                          employeeCode: emp.code,
-                          employeeName: emp.name,
-                          department: emp.department,
-                          designation: emp.designation,
-                          assignedOfficeId: emp.assignedOfficeId,
-                          assignedOfficeName: emp.assignedOfficeName || emp.branchWorkplace,
-                          date: selectedDateForAtt,
-                          status: 'Present' as AttendanceStatus,
-                          inTime: emp.shiftStartTime || payrollSettings?.shiftStartTime || DEFAULT_SHIFT_START_TIME,
-                          outTime: emp.shiftEndTime || payrollSettings?.shiftEndTime || DEFAULT_SHIFT_END_TIME,
-                          overtimeHours: 0,
-                          gpsValidationStatus: 'Manual' as const,
-                        }));
-                        bulkMarkAttendance(bulk);
+                      type="button"
+                      disabled={isBulkSavingAttendance}
+                      onClick={async () => {
+                        setIsBulkSavingAttendance(true);
+                        setAttendanceFeedback(null);
+                        const bulk = fieldForceReps.map((emp) => {
+                          const defaultIn =
+                            emp.shiftStartTime ||
+                            payrollSettings?.shiftStartTime ||
+                            DEFAULT_SHIFT_START_TIME;
+                          const defaultOut =
+                            emp.shiftEndTime ||
+                            payrollSettings?.shiftEndTime ||
+                            DEFAULT_SHIFT_END_TIME;
+                          const shiftCalc = calculateShiftAttendanceStatus({
+                            checkInTime: defaultIn,
+                            checkOutTime: defaultOut,
+                            shiftStartTime: defaultIn,
+                            gracePeriodMinutes:
+                              emp.gracePeriodMinutes ??
+                              payrollSettings?.lateGracePeriodMinutes ??
+                              DEFAULT_GRACE_PERIOD_MINUTES,
+                            standardDailyHours:
+                              payrollSettings?.standardDailyHours ||
+                              payrollSettings?.standardWorkHoursPerDay ||
+                              8,
+                          });
+                          return {
+                            employeeId: emp.id,
+                            employeeCode: emp.code,
+                            employeeName: emp.name,
+                            department: emp.department,
+                            designation: emp.designation,
+                            assignedOfficeId: emp.assignedOfficeId,
+                            assignedOfficeName: emp.assignedOfficeName || emp.branchWorkplace,
+                            date: selectedDateForAtt,
+                            status: 'Present' as AttendanceStatus,
+                            inTime: defaultIn,
+                            checkInTime: defaultIn,
+                            outTime: defaultOut,
+                            checkOutTime: defaultOut,
+                            workHours: shiftCalc.totalWorkingHours,
+                            overtimeHours: shiftCalc.overtimeHours,
+                            lateDurationMinutes: 0,
+                            gpsValidationStatus: 'Manual' as const,
+                          };
+                        });
+                        const res = await bulkMarkAttendance(bulk);
+                        setIsBulkSavingAttendance(false);
+                        setDailyGridDrafts({});
+                        if (res.dbSynced) {
+                          setAttendanceFeedback({
+                            type: 'success',
+                            message: `Marked ${bulk.length} employee(s) Present for ${selectedDateForAtt} and saved to Supabase.`,
+                          });
+                        } else {
+                          setAttendanceFeedback({
+                            type: 'warning',
+                            message:
+                              res.error ||
+                              `Updated locally for ${selectedDateForAtt}, but Supabase did not persist to employee_attendances.`,
+                            sqlFix: res.sqlFix || EMPLOYEE_ATTENDANCES_TABLE_SQL,
+                          });
+                        }
                       }}
-                      className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs"
+                      className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Mark All Present ({selectedDateForAtt})</span>
+                      <span>
+                        {isBulkSavingAttendance
+                          ? 'Saving...'
+                          : `Mark All Present (${selectedDateForAtt})`}
+                      </span>
                     </button>
                   )}
                 </div>
               </div>
+
+              {attendanceFeedback && (
+                <div
+                  className={`p-3 rounded-xl border text-xs flex items-start justify-between gap-3 ${
+                    attendanceFeedback.type === 'success'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                      : attendanceFeedback.type === 'warning'
+                      ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200'
+                      : 'bg-rose-50 dark:bg-rose-950/50 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    {attendanceFeedback.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                    )}
+                    <span className="font-medium leading-relaxed">{attendanceFeedback.message}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceFeedback(null)}
+                    className="p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/10"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {canCreatePayroll &&
+                !attendanceDbStatus.synced &&
+                (attendanceDbStatus.status === 'rls_blocked' ||
+                  attendanceDbStatus.status === 'table_missing' ||
+                  attendanceDbStatus.status === 'error' ||
+                  Boolean(attendanceFeedback?.sqlFix)) && (
+                  <div className="p-4 rounded-2xl bg-amber-50/90 dark:bg-amber-950/35 border border-amber-200 dark:border-amber-800/80 space-y-3">
+                    <div className="flex items-start gap-2.5">
+                      <Database className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                      <div>
+                        <div className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                          Supabase Permission / Table Setup Needed for Attendance Check In & Check Out
+                        </div>
+                        <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5 leading-relaxed">
+                          {attendanceDbStatus.error ||
+                            attendanceFeedback?.message ||
+                            'Supabase blocked writing to public.employee_attendances.'}{' '}
+                          Run the SQL script below once in Supabase SQL Editor, then click{' '}
+                          <b>Sync to Supabase</b>.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                          One-Time Supabase SQL Fix (RLS Policy + Columns)
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(
+                                  attendanceDbStatus.sqlFix ||
+                                    attendanceFeedback?.sqlFix ||
+                                    EMPLOYEE_ATTENDANCES_TABLE_SQL
+                                );
+                                setCopiedAttendanceSql(true);
+                                setTimeout(() => setCopiedAttendanceSql(false), 2500);
+                              } catch {}
+                            }}
+                            className="px-2.5 py-1 rounded-md bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-[10px] font-bold text-amber-900 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-slate-800 flex items-center gap-1"
+                          >
+                            {copiedAttendanceSql ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-600" />
+                                <span>Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" />
+                                <span>Copy SQL</span>
+                              </>
+                            )}
+                          </button>
+                          <a
+                            href={supabaseSqlEditorUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2.5 py-1 rounded-md bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-[10px] font-bold text-amber-900 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-slate-800 flex items-center gap-1"
+                          >
+                            <span>Open SQL Editor</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        </div>
+                      </div>
+                      <pre className="p-3 rounded-lg bg-slate-900 text-slate-100 text-[10px] font-mono overflow-x-auto max-h-40 leading-relaxed border border-slate-800">
+                        {attendanceDbStatus.sqlFix ||
+                          attendanceFeedback?.sqlFix ||
+                          EMPLOYEE_ATTENDANCES_TABLE_SQL}
+                      </pre>
+                    </div>
+                  </div>
+                )}
 
               <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-hidden">
                 <div className="overflow-x-auto">
@@ -2005,8 +2227,8 @@ export const PayrollModule: React.FC = () => {
                         <th className="py-3 px-4">Employee</th>
                         <th className="py-3 px-4">Department / Assigned Office</th>
                         <th className="py-3 px-4">Status ({selectedDateForAtt})</th>
-                        <th className="py-3 px-4">Check In / Distance</th>
-                        <th className="py-3 px-4">Check Out / Distance</th>
+                        <th className="py-3 px-4">Check In</th>
+                        <th className="py-3 px-4">Check Out</th>
                         <th className="py-3 px-4">GPS Validation</th>
                         <th className="py-3 px-4 text-center">Monthly Summary ({selectedMonthYear})</th>
                         <th className="py-3 px-4 text-right">Quick Action</th>
@@ -2022,6 +2244,127 @@ export const PayrollModule: React.FC = () => {
                         const summary = getEmployeeAttendanceSummary(emp.id, selectedMonthYear);
                         const status = todayRec ? todayRec.status : 'Absent';
                         const gpsStatus = todayRec?.gpsValidationStatus || (todayRec ? 'Manual' : '—');
+                        const rowKey = `${emp.id}_${selectedDateForAtt}`;
+                        const savedIn = todayRec?.checkInTime || todayRec?.inTime || '';
+                        const savedOut = todayRec?.checkOutTime || todayRec?.outTime || '';
+                        const draft = dailyGridDrafts[rowKey];
+                        const inValue = draft ? draft.inTime : savedIn;
+                        const outValue = draft ? draft.outTime : savedOut;
+                        const hasDraftChange =
+                          Boolean(draft) && (draft.inTime !== savedIn || draft.outTime !== savedOut);
+                        const isSavingRow = savingAttendanceRowId === emp.id;
+
+                        const saveRowAttendance = async (
+                          targetStatus?: AttendanceStatus,
+                          overrideTimes?: { inTime?: string; outTime?: string }
+                        ) => {
+                          if (!canCreatePayroll || isSavingRow) return;
+                          const shiftStart =
+                            emp.shiftStartTime ||
+                            payrollSettings?.shiftStartTime ||
+                            DEFAULT_SHIFT_START_TIME;
+                          const shiftEnd =
+                            emp.shiftEndTime ||
+                            payrollSettings?.shiftEndTime ||
+                            DEFAULT_SHIFT_END_TIME;
+                          const graceMins =
+                            emp.gracePeriodMinutes ??
+                            payrollSettings?.lateGracePeriodMinutes ??
+                            DEFAULT_GRACE_PERIOD_MINUTES;
+                          const stdHours =
+                            payrollSettings?.standardDailyHours ||
+                            payrollSettings?.standardWorkHoursPerDay ||
+                            8;
+
+                          let finalIn = (overrideTimes?.inTime ?? inValue).trim();
+                          let finalOut = (overrideTimes?.outTime ?? outValue).trim();
+                          const nextStatus: AttendanceStatus = targetStatus || todayRec?.status || 'Present';
+
+                          if (nextStatus === 'Absent') {
+                            finalIn = '';
+                            finalOut = '';
+                          } else {
+                            if (!finalIn) {
+                              finalIn = nextStatus === 'Late' ? '10:15' : shiftStart;
+                            }
+                            if (!finalOut && targetStatus) {
+                              finalOut = nextStatus === 'Half Day' ? '13:00' : shiftEnd;
+                            }
+                          }
+
+                          let workHours = 0;
+                          let overtimeHours = 0;
+                          let lateDurationMinutes = 0;
+                          let isLate = nextStatus === 'Late';
+
+                          if (nextStatus !== 'Absent' && finalIn) {
+                            const calc = calculateShiftAttendanceStatus({
+                              checkInTime: finalIn,
+                              checkOutTime: finalOut || undefined,
+                              shiftStartTime: shiftStart,
+                              gracePeriodMinutes: graceMins,
+                              standardDailyHours: stdHours,
+                            });
+                            workHours = calc.totalWorkingHours;
+                            overtimeHours = calc.overtimeHours;
+                            lateDurationMinutes = calc.lateDurationMinutes;
+                            isLate = nextStatus === 'Late' ? true : calc.isLate;
+                          }
+
+                          setSavingAttendanceRowId(emp.id);
+                          setAttendanceFeedback(null);
+                          const res = await markAttendance({
+                            employeeId: emp.id,
+                            employeeCode: emp.code,
+                            employeeName: emp.name,
+                            department: emp.department,
+                            designation: emp.designation,
+                            assignedOfficeId: emp.assignedOfficeId,
+                            assignedOfficeName: emp.assignedOfficeName || emp.branchWorkplace,
+                            date: selectedDateForAtt,
+                            status: nextStatus,
+                            inTime: finalIn || undefined,
+                            checkInTime: finalIn || undefined,
+                            outTime: finalOut || undefined,
+                            checkOutTime: finalOut || undefined,
+                            workHours,
+                            overtimeHours,
+                            isLate,
+                            lateDurationMinutes,
+                            lateMinutes: lateDurationMinutes,
+                            gpsValidationStatus: todayRec?.gpsValidationStatus || 'Manual',
+                          });
+                          setSavingAttendanceRowId(null);
+
+                          if (!res.success) {
+                            setAttendanceFeedback({
+                              type: 'error',
+                              message: res.error || `Failed to save attendance for ${emp.name}.`,
+                            });
+                            return;
+                          }
+
+                          setDailyGridDrafts((prev) => {
+                            const next = { ...prev };
+                            delete next[rowKey];
+                            return next;
+                          });
+
+                          if (res.dbSynced) {
+                            setAttendanceFeedback({
+                              type: 'success',
+                              message: `Saved ${emp.name} (${selectedDateForAtt}) Check In/Out to Supabase.`,
+                            });
+                          } else {
+                            setAttendanceFeedback({
+                              type: 'warning',
+                              message:
+                                res.error ||
+                                `Saved locally for ${emp.name}, but Supabase did not persist to employee_attendances.`,
+                              sqlFix: res.sqlFix || EMPLOYEE_ATTENDANCES_TABLE_SQL,
+                            });
+                          }
+                        };
 
                         return (
                           <tr key={emp.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
@@ -2051,17 +2394,55 @@ export const PayrollModule: React.FC = () => {
                               </span>
                             </td>
                             <td className="py-3 px-4 font-mono tabular-nums">
-                              <div>{todayRec?.checkInTime || todayRec?.inTime || '—'}</div>
+                              {canCreatePayroll ? (
+                                <input
+                                  type="time"
+                                  value={inValue}
+                                  disabled={isSavingRow}
+                                  onChange={(e) => {
+                                    const nextIn = e.target.value;
+                                    setDailyGridDrafts((prev) => ({
+                                      ...prev,
+                                      [rowKey]: {
+                                        inTime: nextIn,
+                                        outTime: prev[rowKey]?.outTime ?? savedOut,
+                                      },
+                                    }));
+                                  }}
+                                  className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-mono text-slate-900 dark:text-slate-100"
+                                />
+                              ) : (
+                                <div>{savedIn || '—'}</div>
+                              )}
                               {typeof todayRec?.checkInDistanceMeters === 'number' && (
-                                <span className="text-[10px] text-emerald-600">
+                                <span className="block text-[10px] text-emerald-600 mt-0.5">
                                   {Math.round(todayRec.checkInDistanceMeters)}m from office
                                 </span>
                               )}
                             </td>
                             <td className="py-3 px-4 font-mono tabular-nums">
-                              <div>{todayRec?.checkOutTime || todayRec?.outTime || '—'}</div>
+                              {canCreatePayroll ? (
+                                <input
+                                  type="time"
+                                  value={outValue}
+                                  disabled={isSavingRow}
+                                  onChange={(e) => {
+                                    const nextOut = e.target.value;
+                                    setDailyGridDrafts((prev) => ({
+                                      ...prev,
+                                      [rowKey]: {
+                                        inTime: prev[rowKey]?.inTime ?? savedIn,
+                                        outTime: nextOut,
+                                      },
+                                    }));
+                                  }}
+                                  className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-mono text-slate-900 dark:text-slate-100"
+                                />
+                              ) : (
+                                <div>{savedOut || '—'}</div>
+                              )}
                               {typeof todayRec?.checkOutDistanceMeters === 'number' && (
-                                <span className="text-[10px] text-emerald-600">
+                                <span className="block text-[10px] text-emerald-600 mt-0.5">
                                   {Math.round(todayRec.checkOutDistanceMeters)}m from office
                                 </span>
                               )}
@@ -2088,28 +2469,54 @@ export const PayrollModule: React.FC = () => {
                             </td>
                             <td className="py-3 px-4 text-right">
                               {canCreatePayroll ? (
-                                <div className="inline-flex gap-1">
+                                <div className="inline-flex flex-wrap items-center justify-end gap-1">
+                                  {(hasDraftChange || inValue || outValue) && (
+                                    <button
+                                      type="button"
+                                      disabled={isSavingRow}
+                                      onClick={() => saveRowAttendance()}
+                                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                                        hasDraftChange
+                                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs'
+                                          : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100'
+                                      }`}
+                                    >
+                                      {isSavingRow ? 'Saving...' : 'Save'}
+                                    </button>
+                                  )}
                                   {(['Present', 'Late', 'Half Day', 'Absent'] as AttendanceStatus[]).map((st) => (
                                     <button
                                       key={st}
+                                      type="button"
+                                      disabled={isSavingRow}
                                       onClick={() => {
-                                        markAttendance({
-                                          employeeId: emp.id,
-                                          employeeCode: emp.code,
-                                          employeeName: emp.name,
-                                          department: emp.department,
-                                          designation: emp.designation,
-                                          assignedOfficeId: emp.assignedOfficeId,
-                                          assignedOfficeName: emp.assignedOfficeName || emp.branchWorkplace,
-                                          date: selectedDateForAtt,
-                                          status: st,
-                                          inTime: st === 'Late' ? '10:15' : emp.shiftStartTime || '09:00',
-                                          outTime: st === 'Half Day' ? '13:00' : emp.shiftEndTime || '18:00',
-                                          overtimeHours: 0,
-                                          gpsValidationStatus: 'Manual',
-                                        });
+                                        const shiftStart =
+                                          emp.shiftStartTime ||
+                                          payrollSettings?.shiftStartTime ||
+                                          DEFAULT_SHIFT_START_TIME;
+                                        const shiftEnd =
+                                          emp.shiftEndTime ||
+                                          payrollSettings?.shiftEndTime ||
+                                          DEFAULT_SHIFT_END_TIME;
+                                        const targetIn =
+                                          st === 'Absent'
+                                            ? ''
+                                            : hasDraftChange
+                                            ? inValue
+                                            : st === 'Late'
+                                            ? '10:15'
+                                            : inValue || shiftStart;
+                                        const targetOut =
+                                          st === 'Absent'
+                                            ? ''
+                                            : hasDraftChange
+                                            ? outValue
+                                            : st === 'Half Day'
+                                            ? '13:00'
+                                            : outValue || shiftEnd;
+                                        saveRowAttendance(st, { inTime: targetIn, outTime: targetOut });
                                       }}
-                                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all disabled:opacity-50 ${
                                         todayRec && status === st
                                           ? 'bg-blue-600 text-white'
                                           : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'

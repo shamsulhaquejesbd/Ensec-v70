@@ -254,51 +254,85 @@ async function persistRejectedAttempt(attempt: RejectedAttendanceAttempt) {
   }
 }
 
-async function persistAcceptedAttendance(record: AttendanceRecord) {
+async function persistAcceptedAttendance(
+  record: AttendanceRecord
+): Promise<{ dbSynced: boolean; dbError?: string; dbCode?: string }> {
   const key = `${record.employeeId}_${record.date}`;
   attendanceRecordsStore.set(key, record);
-  if (serverSupabase) {
-    try {
-      await serverSupabase.from('employee_attendances').upsert(
-        {
-          id: record.id,
-          employee_id: record.employeeId || record.fieldForceId || '',
-          employee_code: record.employeeCode || '',
-          employee_name: record.employeeName,
-          department: record.department || null,
-          designation: record.designation || null,
-          date: record.date,
-          status: record.status,
-          in_time: record.inTime || record.checkInTime || null,
-          out_time: record.outTime || record.checkOutTime || null,
-          overtime_hours: record.overtimeHours || 0,
-          work_hours: record.workHours || 0,
-          late_duration_minutes: record.lateDurationMinutes ?? record.lateMinutes ?? 0,
-          assigned_office_id: record.assignedOfficeId || null,
-          assigned_office_name: record.assignedOfficeName || null,
-          office_latitude: record.officeLatitude ?? null,
-          office_longitude: record.officeLongitude ?? null,
-          allowed_radius_meters: record.allowedRadiusMeters ?? DEFAULT_ALLOWED_RADIUS_METERS,
-          check_in_latitude: record.checkInLatitude ?? null,
-          check_in_longitude: record.checkInLongitude ?? null,
-          check_in_distance_meters: record.checkInDistanceMeters ?? null,
-          check_in_gps_accuracy_meters: record.checkInGpsAccuracyMeters ?? null,
-          check_in_location_text: record.checkInLocationText || null,
-          check_out_latitude: record.checkOutLatitude ?? null,
-          check_out_longitude: record.checkOutLongitude ?? null,
-          check_out_distance_meters: record.checkOutDistanceMeters ?? null,
-          check_out_gps_accuracy_meters: record.checkOutGpsAccuracyMeters ?? null,
-          check_out_location_text: record.checkOutLocationText || null,
-          gps_validation_status: record.gpsValidationStatus || 'Accepted',
-          validation_reason: record.validationReason || null,
-          remarks: record.remarks || null,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'employee_id,date' }
-      );
-    } catch {
-      // Non-fatal if migration pending
+  if (!serverSupabase) {
+    return { dbSynced: false, dbError: 'Supabase server client is not configured.' };
+  }
+  const workingPayload: Record<string, any> = {
+    id: record.id,
+    employee_id: record.employeeId || record.fieldForceId || '',
+    employee_code: record.employeeCode || '',
+    employee_name: record.employeeName,
+    department: record.department || null,
+    designation: record.designation || null,
+    date: record.date,
+    status: record.status,
+    in_time: record.inTime || record.checkInTime || null,
+    out_time: record.outTime || record.checkOutTime || null,
+    overtime_hours: record.overtimeHours || 0,
+    work_hours: record.workHours || 0,
+    late_duration_minutes: record.lateDurationMinutes ?? record.lateMinutes ?? 0,
+    assigned_office_id: record.assignedOfficeId || null,
+    assigned_office_name: record.assignedOfficeName || null,
+    office_latitude: record.officeLatitude ?? null,
+    office_longitude: record.officeLongitude ?? null,
+    allowed_radius_meters: record.allowedRadiusMeters ?? DEFAULT_ALLOWED_RADIUS_METERS,
+    check_in_latitude: record.checkInLatitude ?? null,
+    check_in_longitude: record.checkInLongitude ?? null,
+    check_in_distance_meters: record.checkInDistanceMeters ?? null,
+    check_in_gps_accuracy_meters: record.checkInGpsAccuracyMeters ?? null,
+    check_in_location_text: record.checkInLocationText || null,
+    check_out_latitude: record.checkOutLatitude ?? null,
+    check_out_longitude: record.checkOutLongitude ?? null,
+    check_out_distance_meters: record.checkOutDistanceMeters ?? null,
+    check_out_gps_accuracy_meters: record.checkOutGpsAccuracyMeters ?? null,
+    check_out_location_text: record.checkOutLocationText || null,
+    gps_validation_status: record.gpsValidationStatus || 'Accepted',
+    validation_reason: record.validationReason || null,
+    remarks: record.remarks || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  try {
+    let lastError: any = null;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const { error } = await serverSupabase
+        .from('employee_attendances')
+        .upsert(workingPayload, { onConflict: 'employee_id,date' });
+      if (!error) {
+        return { dbSynced: true };
+      }
+      lastError = error;
+      const msg = String(error.message || '');
+      let missingCol: string | null = null;
+      if (error.code === 'PGRST204' || msg.includes('schema cache')) {
+        missingCol = msg.match(/Could not find the '([^']+)' column/i)?.[1] || null;
+      } else if (error.code === '42703' || msg.toLowerCase().includes('does not exist')) {
+        missingCol =
+          msg.match(/column\s+"([^"]+)"/i)?.[1] ||
+          msg.match(/column\s+(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)/i)?.[1] ||
+          null;
+      }
+      if (missingCol && Object.prototype.hasOwnProperty.call(workingPayload, missingCol)) {
+        delete workingPayload[missingCol];
+        continue;
+      }
+      break;
     }
+    return {
+      dbSynced: false,
+      dbError: lastError?.message || 'Failed to save attendance to Supabase.',
+      dbCode: lastError?.code ? String(lastError.code) : undefined,
+    };
+  } catch (err: any) {
+    return {
+      dbSynced: false,
+      dbError: err?.message || 'Exception while saving attendance to Supabase.',
+    };
   }
 }
 
@@ -695,7 +729,7 @@ export function createAppServer() {
       updatedAt: nowIso,
     };
 
-    await persistAcceptedAttendance(record);
+    const dbResult = await persistAcceptedAttendance(record);
 
     return res.status(200).json({
       accepted: true,
@@ -704,6 +738,9 @@ export function createAppServer() {
       gpsValidationStatus: 'Accepted',
       reason: validation.reason,
       record,
+      dbSynced: dbResult.dbSynced,
+      dbError: dbResult.dbError,
+      dbCode: dbResult.dbCode,
     });
   });
 
@@ -907,7 +944,7 @@ export function createAppServer() {
       updatedAt: new Date().toISOString(),
     };
 
-    await persistAcceptedAttendance(updatedRecord);
+    const dbResult = await persistAcceptedAttendance(updatedRecord);
 
     return res.status(200).json({
       accepted: true,
@@ -916,6 +953,9 @@ export function createAppServer() {
       gpsValidationStatus: 'Accepted',
       reason: validation.reason,
       record: updatedRecord,
+      dbSynced: dbResult.dbSynced,
+      dbError: dbResult.dbError,
+      dbCode: dbResult.dbCode,
     });
   });
 
