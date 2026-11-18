@@ -229,14 +229,7 @@ import {
   isValidCoordinatePair,
 } from '../lib/geofence.ts';
 import {
-  INITIAL_CENTRAL_EMPLOYEES,
-  INITIAL_SALARY_STRUCTURES,
-  INITIAL_ADVANCE_LOANS,
-  INITIAL_LEAVE_RECORDS,
-  INITIAL_OVERTIME_RECORDS,
-  INITIAL_BONUS_RECORDS,
   DEFAULT_PAYROLL_SETTINGS,
-  INITIAL_MONTHLY_PAYROLL_RUNS,
 } from '../mock/payrollData.ts';
 import {
   supabase,
@@ -2352,18 +2345,32 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>(INITIAL_PAYROLL);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(INITIAL_AUDIT_LOGS);
 
-  // Comprehensive Central Employee & Payroll State
+  // Purge any legacy Payroll & HR local/session memory caches (only runtime / Supabase data is used)
+  const purgePayrollLocalSessionMemory = () => {
+    if (typeof window === 'undefined') return;
+    const payrollStorageKeys = [
+      'ensec_payroll_records',
+      'ensec_salary_structures',
+      'ensec_attendance_records',
+      'ensec_rejected_attendance_attempts',
+      'ensec_leave_records',
+      'ensec_advance_loans',
+      'ensec_overtime_records',
+      'ensec_bonus_records',
+      'ensec_monthly_payroll_runs',
+      'ensec_salary_payment_records',
+      'ensec_payroll_settings',
+    ];
+    payrollStorageKeys.forEach((key) => {
+      try { localStorage.removeItem(key); } catch {}
+      try { sessionStorage.removeItem(key); } catch {}
+    });
+  };
+
+  // Comprehensive Central Employee & Payroll State (clean baseline: no test or local session memory data)
   const [salaryStructures, setSalaryStructures] = useState<EmployeeSalaryStructure[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('ensec_salary_structures');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        }
-      } catch (e) {}
-    }
-    return INITIAL_SALARY_STRUCTURES;
+    purgePayrollLocalSessionMemory();
+    return [];
   });
 
   const [salaryStructuresDbStatus, setSalaryStructuresDbStatus] = useState<SalaryStructuresDbStatus>({
@@ -2401,108 +2408,15 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return DEFAULT_OFFICE_LOCATIONS;
   });
 
-  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('ensec_attendance_records');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        }
-      } catch (e) {}
-    }
-    return [];
-  });
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
 
-  const [rejectedAttendanceAttempts, setRejectedAttendanceAttempts] = useState<RejectedAttendanceAttempt[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('ensec_rejected_attendance_attempts');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) return parsed;
-        }
-      } catch (e) {}
-    }
-    return [];
-  });
+  const [rejectedAttendanceAttempts, setRejectedAttendanceAttempts] = useState<RejectedAttendanceAttempt[]>([]);
 
-  const [leaveRecords, setLeaveRecords] = useState<LeaveRecord[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('ensec_leave_records');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        }
-      } catch (e) {}
-    }
-    return INITIAL_LEAVE_RECORDS;
-  });
+  const [leaveRecords, setLeaveRecords] = useState<LeaveRecord[]>([]);
 
-  const [advanceLoans, setAdvanceLoans] = useState<AdvanceLoanRecord[]>(() => {
-    const normalizeLoan = (loan: any): AdvanceLoanRecord => {
-      const principal = loan.principalAmountBDT ?? loan.approvedAmountBDT ?? loan.requestedAmountBDT ?? 0;
-      const monthly = loan.monthlyDeductionBDT ?? loan.monthlyInstallmentBDT ?? 0;
-      const repaid = loan.repaidAmountBDT ?? loan.totalPaidBDT ?? 0;
-      const remaining = loan.remainingAmountBDT ?? loan.remainingBalanceBDT ?? Math.max(0, principal - repaid);
-      const tenure = loan.repaymentTenureMonths ?? loan.installmentDurationMonths ?? (loan.schedule?.length || 1);
-      const loanType = loan.loanType ?? loan.type ?? 'Salary Advance';
-      return {
-        ...loan,
-        principalAmountBDT: principal,
-        approvedAmountBDT: loan.approvedAmountBDT ?? principal,
-        requestedAmountBDT: loan.requestedAmountBDT ?? principal,
-        monthlyDeductionBDT: monthly,
-        monthlyInstallmentBDT: loan.monthlyInstallmentBDT ?? monthly,
-        repaidAmountBDT: repaid,
-        totalPaidBDT: loan.totalPaidBDT ?? repaid,
-        remainingAmountBDT: remaining,
-        remainingBalanceBDT: loan.remainingBalanceBDT ?? remaining,
-        repaymentTenureMonths: tenure,
-        installmentDurationMonths: loan.installmentDurationMonths ?? tenure,
-        loanType,
-        type: loan.type ?? loanType,
-        schedule: (loan.schedule || []).map((s: any) => ({
-          ...s,
-          amountBDT: s.amountBDT ?? s.installmentAmountBDT ?? 0,
-          installmentAmountBDT: s.installmentAmountBDT ?? s.amountBDT ?? 0,
-          paidDate: s.paidDate ?? s.deductionDate,
-          deductionDate: s.deductionDate ?? s.paidDate,
-        })),
-      };
-    };
+  const [advanceLoans, setAdvanceLoans] = useState<AdvanceLoanRecord[]>([]);
 
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('ensec_advance_loans');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(normalizeLoan);
-        }
-      } catch (e) {}
-    }
-    return INITIAL_ADVANCE_LOANS.map(normalizeLoan);
-  });
-
-  const [overtimeRecords, setOvertimeRecords] = useState<OvertimeRecord[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const hasPurged = localStorage.getItem('ensec_overtime_test_purged_v1');
-        const stored = localStorage.getItem('ensec_overtime_records');
-        if (!hasPurged || (stored && (stored.includes('ot-001') || stored.includes('KUS-B2610-01') || stored.includes('Abu Jubair Khan')))) {
-          localStorage.removeItem('ensec_overtime_records');
-          try { sessionStorage.removeItem('ensec_overtime_records'); } catch {}
-          return [];
-        }
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) return parsed;
-        }
-      } catch (e) {}
-    }
-    return INITIAL_OVERTIME_RECORDS;
-  });
+  const [overtimeRecords, setOvertimeRecords] = useState<OvertimeRecord[]>([]);
 
   // Complete Overtime Management Module States
   const [overtimeRequests, setOvertimeRequests] = useState<OvertimeRequest[]>(() => {
@@ -2576,85 +2490,19 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return INITIAL_OVERTIME_AUDIT_LOGS;
   });
 
-  const [bonusRecords, setBonusRecords] = useState<BonusRecord[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('ensec_bonus_records');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        }
-      } catch (e) {}
-    }
-    return INITIAL_BONUS_RECORDS;
-  });
+  const [bonusRecords, setBonusRecords] = useState<BonusRecord[]>([]);
 
-  const [monthlyPayrollRuns, setMonthlyPayrollRuns] = useState<MonthlyPayrollRun[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('ensec_monthly_payroll_runs');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        }
-      } catch (e) {}
-    }
-    return INITIAL_MONTHLY_PAYROLL_RUNS;
-  });
+  const [monthlyPayrollRuns, setMonthlyPayrollRuns] = useState<MonthlyPayrollRun[]>([]);
 
-  const [salaryPaymentRecords, setSalaryPaymentRecords] = useState<SalaryPaymentRecord[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('ensec_salary_payment_records');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) return parsed;
-        }
-      } catch (e) {}
-    }
-    return [];
-  });
+  const [salaryPaymentRecords, setSalaryPaymentRecords] = useState<SalaryPaymentRecord[]>([]);
 
-  const [payrollSettings, setPayrollSettings] = useState<PayrollSettings>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('ensec_payroll_settings');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (parsed && typeof parsed === 'object') {
-            return {
-              ...DEFAULT_PAYROLL_SETTINGS,
-              ...parsed,
-              leaveQuotas: {
-                annualLeave: parsed.leaveQuotas?.annualLeave ?? DEFAULT_PAYROLL_SETTINGS.leaveQuotas?.annualLeave ?? 14,
-                casualLeave: parsed.leaveQuotas?.casualLeave ?? DEFAULT_PAYROLL_SETTINGS.leaveQuotas?.casualLeave ?? 10,
-                sickLeave: parsed.leaveQuotas?.sickLeave ?? DEFAULT_PAYROLL_SETTINGS.leaveQuotas?.sickLeave ?? 14,
-                maternityLeave: parsed.leaveQuotas?.maternityLeave ?? DEFAULT_PAYROLL_SETTINGS.leaveQuotas?.maternityLeave ?? 112,
-              },
-              overtimeConfig: {
-                hourlyRateMultiplier: parsed.overtimeConfig?.hourlyRateMultiplier ?? DEFAULT_PAYROLL_SETTINGS.overtimeConfig?.hourlyRateMultiplier ?? 1.5,
-              },
-              deductionRules: {
-                ...DEFAULT_PAYROLL_SETTINGS.deductionRules,
-                ...(parsed.deductionRules || {}),
-              },
-              salaryComponents: {
-                ...DEFAULT_PAYROLL_SETTINGS.salaryComponents,
-                ...(parsed.salaryComponents || {}),
-              },
-            };
-          }
-        }
-      } catch (e) {}
-    }
-    return DEFAULT_PAYROLL_SETTINGS;
-  });
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ensec_salary_structures', JSON.stringify(salaryStructures));
-    }
-  }, [salaryStructures]);
+  const [payrollSettings, setPayrollSettings] = useState<PayrollSettings>(() => ({
+    ...DEFAULT_PAYROLL_SETTINGS,
+    leaveQuotas: { ...(DEFAULT_PAYROLL_SETTINGS.leaveQuotas || { annualLeave: 14, casualLeave: 10, sickLeave: 14, maternityLeave: 112 }) },
+    overtimeConfig: { ...(DEFAULT_PAYROLL_SETTINGS.overtimeConfig || { hourlyRateMultiplier: 1.5 }) },
+    deductionRules: { ...(DEFAULT_PAYROLL_SETTINGS.deductionRules || {}) },
+    salaryComponents: { ...(DEFAULT_PAYROLL_SETTINGS.salaryComponents || {}) },
+  }));
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -2668,39 +2516,13 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [officeLocations]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ensec_attendance_records', JSON.stringify(attendanceRecords));
-    }
+    if (attendanceRecords.length === 0) return;
     fetch('/api/attendance/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ records: attendanceRecords }),
     }).catch(() => {});
   }, [attendanceRecords]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ensec_rejected_attendance_attempts', JSON.stringify(rejectedAttendanceAttempts));
-    }
-  }, [rejectedAttendanceAttempts]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ensec_leave_records', JSON.stringify(leaveRecords));
-    }
-  }, [leaveRecords]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ensec_advance_loans', JSON.stringify(advanceLoans));
-    }
-  }, [advanceLoans]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ensec_overtime_records', JSON.stringify(overtimeRecords));
-    }
-  }, [overtimeRecords]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -2725,30 +2547,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem('ensec_overtime_audit_logs', JSON.stringify(overtimeAuditLogs));
     }
   }, [overtimeAuditLogs]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ensec_bonus_records', JSON.stringify(bonusRecords));
-    }
-  }, [bonusRecords]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ensec_monthly_payroll_runs', JSON.stringify(monthlyPayrollRuns));
-    }
-  }, [monthlyPayrollRuns]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ensec_salary_payment_records', JSON.stringify(salaryPaymentRecords));
-    }
-  }, [salaryPaymentRecords]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ensec_payroll_settings', JSON.stringify(payrollSettings));
-    }
-  }, [payrollSettings]);
 
   // Warranty & Battery Service Module States
   const [warrantyTickets, setWarrantyTickets] = useState<WarrantyTicket[]>(INITIAL_WARRANTY_TICKETS);
@@ -4539,19 +4337,17 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         const remoteList = Array.from(mappedByEmp.values());
-        if (remoteList.length > 0) {
-          setSalaryStructures((prev) => {
-            const merged = [...remoteList];
-            const remoteEmpIds = new Set(remoteList.map((r) => r.employeeId || r.fieldForceId));
-            prev.forEach((p) => {
-              const pKey = p.employeeId || p.fieldForceId;
-              if (pKey && !remoteEmpIds.has(pKey) && !String(p.id).startsWith('str-ff-')) {
-                merged.push(p);
-              }
-            });
-            return merged;
+        setSalaryStructures((prev) => {
+          const merged = [...remoteList];
+          const remoteEmpIds = new Set(remoteList.map((r) => r.employeeId || r.fieldForceId));
+          prev.forEach((p) => {
+            const pKey = p.employeeId || p.fieldForceId;
+            if (pKey && !remoteEmpIds.has(pKey) && !String(p.id).startsWith('str-ff-')) {
+              merged.push(p);
+            }
           });
-        }
+          return merged;
+        });
         setSalaryStructuresDbStatus((prev) =>
           prev.status === 'rls_blocked' || prev.status === 'table_missing'
             ? prev
@@ -6614,6 +6410,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
     if (typeof window !== 'undefined') {
+      purgePayrollLocalSessionMemory();
       try {
         const cachedCats = localStorage.getItem('ensec_product_categories');
         if (cachedCats && cachedCats.includes('Telecom Energy Storage')) {
@@ -21950,8 +21747,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const items: MonthlySalarySheetItem[] = eligibleStaff.map((emp) => {
       // 1. Get or synthesize salary structure
-      const str = salaryStructures.find((s) => s.employeeId === emp.id);
-      const basic = str ? str.basicSalaryBDT : emp.basicSalaryBDT || 30000;
+      const str = salaryStructures.find((s) => s.employeeId === emp.id || s.fieldForceId === emp.id);
+      const basic = str ? str.basicSalaryBDT : emp.basicSalaryBDT || 0;
       const houseRent = str ? str.houseRentBDT : basic * 0.5;
       const medical = str ? str.medicalAllowanceBDT : basic * 0.1;
       const conveyance = str ? str.conveyanceAllowanceBDT : emp.conveyanceBDT || 0;

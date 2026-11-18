@@ -110,6 +110,7 @@ type PayrollTab =
 export const PayrollModule: React.FC = () => {
   const {
     currentUser,
+    systemSettings,
     fieldForceReps,
     officeLocations,
     salaryStructures,
@@ -169,15 +170,17 @@ export const PayrollModule: React.FC = () => {
   // Active top-level Tab
   const [activeTab, setActiveTab] = useState<PayrollTab>('dashboard');
 
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const currentMonthIso = todayIso.slice(0, 7);
+
   // Month-Year selection across the module
-  const [selectedMonthYear, setSelectedMonthYear] = useState<string>('2026-10');
+  const [selectedMonthYear, setSelectedMonthYear] = useState<string>(currentMonthIso);
   const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>('All');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Attendance Report & GPS Audit Filter States
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const currentMonthStartIso = `${todayIso.slice(0, 7)}-01`;
+  const currentMonthStartIso = `${currentMonthIso}-01`;
   const [attSubView, setAttSubView] = useState<'report' | 'daily_grid' | 'rejected'>('report');
   const [attPeriodMode, setAttPeriodMode] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('monthly');
   const [attDateFrom, setAttDateFrom] = useState<string>(currentMonthStartIso);
@@ -240,56 +243,76 @@ export const PayrollModule: React.FC = () => {
   const [selectedReportId, setSelectedReportId] = useState<string>('rep-register');
 
   // Form states for adding Salary Structure
-  const [strBasic, setStrBasic] = useState<number>(30000);
-  const [strHouseRent, setStrHouseRent] = useState<number>(15000);
-  const [strMedical, setStrMedical] = useState<number>(3000);
-  const [strConveyance, setStrConveyance] = useState<number>(4000);
-  const [strMobile, setStrMobile] = useState<number>(2000);
+  const [strBasic, setStrBasic] = useState<number>(0);
+  const [strHouseRent, setStrHouseRent] = useState<number>(0);
+  const [strMedical, setStrMedical] = useState<number>(0);
+  const [strConveyance, setStrConveyance] = useState<number>(0);
+  const [strMobile, setStrMobile] = useState<number>(0);
   const [strSpecial, setStrSpecial] = useState<number>(0);
   const [strOther, setStrOther] = useState<number>(0);
-  const [strEffectiveFrom, setStrEffectiveFrom] = useState<string>('2026-01-01');
+  const [strEffectiveFrom, setStrEffectiveFrom] = useState<string>(todayIso);
   const [strRevisionReason, setStrRevisionReason] = useState<string>('');
 
   // Form state for Leave Application
   const [leaveEmployeeId, setLeaveEmployeeId] = useState<string>('');
   const [leaveType, setLeaveType] = useState<LeaveType>('Casual Leave');
-  const [leaveStartDate, setLeaveStartDate] = useState<string>(new Date().toISOString().slice(0, 10));
-  const [leaveEndDate, setLeaveEndDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [leaveStartDate, setLeaveStartDate] = useState<string>(todayIso);
+  const [leaveEndDate, setLeaveEndDate] = useState<string>(todayIso);
   const [leaveReason, setLeaveReason] = useState<string>('');
 
   // Form state for Advance / Loan
   const [loanEmployeeId, setLoanEmployeeId] = useState<string>('');
   const [loanType, setLoanType] = useState<'Salary Advance' | 'Employee Loan'>('Employee Loan');
-  const [loanAmount, setLoanAmount] = useState<number>(60000);
-  const [loanTenure, setLoanTenure] = useState<number>(6);
-  const [loanStartMonth, setLoanStartMonth] = useState<string>('2026-11');
-  const [loanReason, setLoanReason] = useState<string>('Family Emergency / Medical Expense');
+  const [loanAmount, setLoanAmount] = useState<number>(0);
+  const [loanTenure, setLoanTenure] = useState<number>(1);
+  const [loanStartMonth, setLoanStartMonth] = useState<string>(currentMonthIso);
+  const [loanReason, setLoanReason] = useState<string>('');
 
   // Form state for Overtime
   const [otEmployeeId, setOtEmployeeId] = useState<string>('');
-  const [otDate, setOtDate] = useState<string>(new Date().toISOString().slice(0, 10));
-  const [otHours, setOtHours] = useState<number>(4);
-  const [otReason, setOtReason] = useState<string>('Production Batch Rush Order Dispatch');
+  const [otDate, setOtDate] = useState<string>(todayIso);
+  const [otHours, setOtHours] = useState<number>(0);
+  const [otReason, setOtReason] = useState<string>('');
 
   // Form state for Bonus
   const [bnsEmployeeId, setBnsEmployeeId] = useState<string>('');
   const [bnsType, setBnsType] = useState<'Festival Bonus' | 'Performance Bonus' | 'Sales Incentive'>('Festival Bonus');
-  const [bnsAmount, setBnsAmount] = useState<number>(20000);
-  const [bnsMonthYear, setBnsMonthYear] = useState<string>('2026-10');
-  const [bnsRemarks, setBnsRemarks] = useState<string>('Annual Festival Ex-Gratia Allowance');
+  const [bnsAmount, setBnsAmount] = useState<number>(0);
+  const [bnsMonthYear, setBnsMonthYear] = useState<string>(currentMonthIso);
+  const [bnsRemarks, setBnsRemarks] = useState<string>('');
 
   // Form state for Disburse Payment
   const [payMethod, setPayMethod] = useState<'Bank Transfer' | 'Cash' | 'bKash' | 'Nagad'>('Bank Transfer');
-  const [payBankName, setPayBankName] = useState<string>('City Bank PLC');
+  const [payBankName, setPayBankName] = useState<string>('');
   const [payRef, setPayRef] = useState<string>('');
-  const [payDate, setPayDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [payDate, setPayDate] = useState<string>(todayIso);
+
+  const monthSelectorOptions = useMemo(() => {
+    const monthsMap = new Map<string, string>();
+    const now = new Date();
+    for (let offset = 1; offset >= -5; offset--) {
+      const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+      const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      monthsMap.set(val, label);
+    }
+    monthlyPayrollRuns.forEach((r) => {
+      const m = r.monthYear || r.payrollMonth;
+      if (m) {
+        const [yr, mo] = m.split('-').map(Number);
+        const d = yr && mo ? new Date(yr, mo - 1, 1) : new Date();
+        const baseLabel = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        monthsMap.set(m, `${baseLabel} (${r.status})`);
+      }
+    });
+    return Array.from(monthsMap.entries())
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([value, label]) => ({ value, label }));
+  }, [monthlyPayrollRuns]);
 
   // Current Active Run for selectedMonthYear
   const currentMonthRun = useMemo(() => {
-    return (
-      monthlyPayrollRuns.find((r) => (r.monthYear || r.payrollMonth) === selectedMonthYear) ||
-      monthlyPayrollRuns[0]
-    );
+    return monthlyPayrollRuns.find((r) => (r.monthYear || r.payrollMonth) === selectedMonthYear);
   }, [monthlyPayrollRuns, selectedMonthYear]);
 
   // Unique departments
@@ -884,10 +907,11 @@ export const PayrollModule: React.FC = () => {
                 onChange={(e) => setSelectedMonthYear(e.target.value)}
                 className="bg-transparent border-none text-slate-800 dark:text-slate-200 font-bold focus:outline-none cursor-pointer"
               >
-                <option value="2026-11">November 2026</option>
-                <option value="2026-10">October 2026 (Finalized)</option>
-                <option value="2026-09">September 2026</option>
-                <option value="2026-08">August 2026</option>
+                {monthSelectorOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -1103,28 +1127,32 @@ export const PayrollModule: React.FC = () => {
                 <Building className="w-4 h-4 text-blue-600" />
               </div>
               <div className="space-y-2.5 pt-1">
-                {deptCostBreakdown.map((item) => {
-                  const pct = Math.round((item.cost / (dashboardMetrics.totalCost || 1)) * 100);
-                  return (
-                    <div key={item.dept} className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-slate-700 dark:text-slate-300">
-                          {item.dept}
-                        </span>
-                        <span className="font-mono font-bold text-slate-900 dark:text-white">
-                          ৳ {(item.cost || 0).toLocaleString()}{' '}
-                          <span className="text-[10px] text-slate-400">({pct}%)</span>
-                        </span>
+                {deptCostBreakdown.length === 0 ? (
+                  <p className="text-xs text-slate-400 py-4 text-center">No payroll cost recorded for {selectedMonthYear}.</p>
+                ) : (
+                  deptCostBreakdown.map((item) => {
+                    const pct = Math.round((item.cost / (dashboardMetrics.totalCost || 1)) * 100);
+                    return (
+                      <div key={item.dept} className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-slate-700 dark:text-slate-300">
+                            {item.dept}
+                          </span>
+                          <span className="font-mono font-bold text-slate-900 dark:text-white">
+                            ৳ {(item.cost || 0).toLocaleString()}{' '}
+                            <span className="text-[10px] text-slate-400">({pct}%)</span>
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-blue-600 rounded-full transition-all"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-blue-600 rounded-full transition-all"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             </div>
 
@@ -1137,28 +1165,32 @@ export const PayrollModule: React.FC = () => {
                 <Users className="w-4 h-4 text-emerald-600" />
               </div>
               <div className="space-y-2.5 pt-1">
-                {categoryBreakdown.map((cat) => {
-                  const pct = Math.round((cat.cost / (dashboardMetrics.totalCost || 1)) * 100);
-                  return (
-                    <div key={cat.category} className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-slate-700 dark:text-slate-300">
-                          {cat.category}{' '}
-                          <span className="text-[10px] text-slate-400">({cat.count} staff)</span>
-                        </span>
-                        <span className="font-mono font-bold text-slate-900 dark:text-white">
-                          ৳ {(cat.cost || 0).toLocaleString()}
-                        </span>
+                {categoryBreakdown.length === 0 ? (
+                  <p className="text-xs text-slate-400 py-4 text-center">No payroll distribution data for {selectedMonthYear}.</p>
+                ) : (
+                  categoryBreakdown.map((cat) => {
+                    const pct = Math.round((cat.cost / (dashboardMetrics.totalCost || 1)) * 100);
+                    return (
+                      <div key={cat.category} className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-slate-700 dark:text-slate-300">
+                            {cat.category}{' '}
+                            <span className="text-[10px] text-slate-400">({cat.count} staff)</span>
+                          </span>
+                          <span className="font-mono font-bold text-slate-900 dark:text-white">
+                            ৳ {(cat.cost || 0).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-500 rounded-full transition-all"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-emerald-500 rounded-full transition-all"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             </div>
 
@@ -1204,29 +1236,33 @@ export const PayrollModule: React.FC = () => {
               <span>Recent Payroll & Double-Entry Accounting Events</span>
             </h3>
             <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-              {salaryPaymentRecords.slice(0, 5).map((pay) => (
-                <div key={pay.id} className="py-2.5 flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-700 flex items-center justify-center font-bold text-[10px]">
-                      PAID
+              {salaryPaymentRecords.length === 0 ? (
+                <p className="text-xs text-slate-400 py-4 text-center">No salary disbursement events recorded yet.</p>
+              ) : (
+                salaryPaymentRecords.slice(0, 5).map((pay) => (
+                  <div key={pay.id} className="py-2.5 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-700 flex items-center justify-center font-bold text-[10px]">
+                        PAID
+                      </div>
+                      <div>
+                        <span className="font-bold text-slate-900 dark:text-white">
+                          {pay.employeeName} ({pay.employeeCode})
+                        </span>
+                        <span className="text-slate-400 text-[11px] block">
+                          Method: {pay.paymentMethod} • Ref: {pay.transactionReference} • {pay.paymentDate}
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="font-bold text-slate-900 dark:text-white">
-                        {pay.employeeName} ({pay.employeeCode})
+                    <div className="text-right">
+                      <span className="font-bold text-slate-900 dark:text-white font-mono">
+                        ৳ {(pay.amountBDT || 0).toLocaleString()}
                       </span>
-                      <span className="text-slate-400 text-[11px] block">
-                        Method: {pay.paymentMethod} • Ref: {pay.transactionReference} • {pay.paymentDate}
-                      </span>
+                      <span className="text-[10px] text-emerald-600 block font-semibold">Disbursed</span>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <span className="font-bold text-slate-900 dark:text-white font-mono">
-                      ৳ {(pay.amountBDT || 0).toLocaleString()}
-                    </span>
-                    <span className="text-[10px] text-emerald-600 block font-semibold">Disbursed</span>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -1432,7 +1468,7 @@ export const PayrollModule: React.FC = () => {
                   ) : (
                     salaryStructurePagination.paginatedEmployees.map((emp) => {
                       const str = findSalaryStructureForEmployee(emp);
-                      const basic = str?.basicSalaryBDT ?? emp.basicSalaryBDT ?? 30000;
+                      const basic = str?.basicSalaryBDT ?? emp.basicSalaryBDT ?? 0;
                       const house = str?.houseRentBDT ?? Math.round(basic * 0.5);
                       const med = str?.medicalAllowanceBDT ?? Math.round(basic * 0.1);
                       const conv = str?.conveyanceAllowanceBDT ?? emp.conveyanceBDT ?? 0;
@@ -1475,7 +1511,7 @@ export const PayrollModule: React.FC = () => {
                           </td>
                           <td className="py-3 px-4 text-center">
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                              {str?.history?.length || 1} records
+                              {str ? str.history?.length || 1 : 0} records
                             </span>
                           </td>
                           <td className="py-3 px-4 text-right">
@@ -1495,7 +1531,7 @@ export const PayrollModule: React.FC = () => {
                                     setStrOther(str.otherAllowancesBDT ?? 0);
                                     setStrEffectiveFrom(str.effectiveFrom || new Date().toISOString().slice(0, 10));
                                   } else {
-                                    const defaultBasic = emp.basicSalaryBDT ?? 30000;
+                                    const defaultBasic = emp.basicSalaryBDT ?? 0;
                                     setEditingStructure(null);
                                     setStrBasic(defaultBasic);
                                     setStrHouseRent(Math.round(defaultBasic * 0.5));
@@ -2217,59 +2253,67 @@ export const PayrollModule: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {leaveRecords.map((l) => (
-                    <tr key={l.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                      <td className="py-3 px-4">
-                        <div className="font-bold text-slate-900 dark:text-white">{l.employeeName}</div>
-                        <span className="font-mono text-[10px] text-blue-600">{l.employeeCode}</span>
-                      </td>
-                      <td className="py-3 px-4 font-semibold text-slate-700 dark:text-slate-300">
-                        {l.leaveType}
-                      </td>
-                      <td className="py-3 px-4 font-mono text-[11px]">
-                        {l.startDate} to {l.endDate}
-                      </td>
-                      <td className="py-3 px-4 font-bold">{l.daysCount} Days</td>
-                      <td className="py-3 px-4 text-slate-500 italic max-w-xs truncate">{l.reason}</td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            l.status === 'Approved'
-                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                              : l.status === 'Rejected'
-                              ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
-                              : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                          }`}
-                        >
-                          {l.status}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
-                        {l.approvedBy || '-'}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        {l.status === 'Pending' &&
-                          (canApprovePayroll ? (
-                            <div className="inline-flex gap-1">
-                              <button
-                                onClick={() => approveLeave(l.id, currentUser?.name || 'Managing Director')}
-                                className="px-2 py-1 rounded bg-emerald-600 text-white font-bold text-[10px] hover:bg-emerald-700"
-                              >
-                                Approve
-                              </button>
-                              <button
-                                onClick={() => rejectLeave(l.id, 'Management operational constraint')}
-                                className="px-2 py-1 rounded bg-rose-600 text-white font-bold text-[10px] hover:bg-rose-700"
-                              >
-                                Reject
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="text-[11px] text-slate-400 font-semibold">Pending Approval</span>
-                          ))}
+                  {leaveRecords.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-10 text-center text-slate-500 dark:text-slate-400">
+                        No leave records found.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    leaveRecords.map((l) => (
+                      <tr key={l.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-slate-900 dark:text-white">{l.employeeName}</div>
+                          <span className="font-mono text-[10px] text-blue-600">{l.employeeCode}</span>
+                        </td>
+                        <td className="py-3 px-4 font-semibold text-slate-700 dark:text-slate-300">
+                          {l.leaveType}
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px]">
+                          {l.startDate} to {l.endDate}
+                        </td>
+                        <td className="py-3 px-4 font-bold">{l.daysCount} Days</td>
+                        <td className="py-3 px-4 text-slate-500 italic max-w-xs truncate">{l.reason}</td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              l.status === 'Approved'
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                : l.status === 'Rejected'
+                                ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                                : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                            }`}
+                          >
+                            {l.status}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
+                          {l.approvedBy || '-'}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {l.status === 'Pending' &&
+                            (canApprovePayroll ? (
+                              <div className="inline-flex gap-1">
+                                <button
+                                  onClick={() => approveLeave(l.id, currentUser?.name || 'Managing Director')}
+                                  className="px-2 py-1 rounded bg-emerald-600 text-white font-bold text-[10px] hover:bg-emerald-700"
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  onClick={() => rejectLeave(l.id, 'Management operational constraint')}
+                                  className="px-2 py-1 rounded bg-rose-600 text-white font-bold text-[10px] hover:bg-rose-700"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 font-semibold">Pending Approval</span>
+                            ))}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2288,9 +2332,6 @@ export const PayrollModule: React.FC = () => {
                 <h2 className="text-sm font-bold text-slate-900 dark:text-white">
                   Employee Advance & Loan Management
                 </h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300">
-                  Benchmark: ৳60,000 / 6 Months @ ৳10,000/mo
-                </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 Automated monthly salary deduction, installment schedules, early settlement, and ledger tracking.
@@ -2328,95 +2369,103 @@ export const PayrollModule: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {advanceLoans.map((loan) => {
-                    const principal = loan.principalAmountBDT ?? loan.approvedAmountBDT ?? loan.requestedAmountBDT ?? 0;
-                    const monthly = loan.monthlyDeductionBDT ?? loan.monthlyInstallmentBDT ?? 0;
-                    const repaid = loan.repaidAmountBDT ?? loan.totalPaidBDT ?? 0;
-                    const remaining = loan.remainingAmountBDT ?? loan.remainingBalanceBDT ?? Math.max(0, principal - repaid);
-                    const tenure = loan.repaymentTenureMonths ?? loan.installmentDurationMonths ?? (loan.schedule?.length || 1);
-                    const paidCount = (loan.schedule || []).filter((s) => s.status === 'Deducted').length;
-                    const pct = Math.round((repaid / (principal || 1)) * 100);
-                    const currentLoanType = loan.loanType || loan.type || 'Salary Advance';
+                  {advanceLoans.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="py-10 text-center text-slate-500 dark:text-slate-400">
+                        No advance or loan records found.
+                      </td>
+                    </tr>
+                  ) : (
+                    advanceLoans.map((loan) => {
+                      const principal = loan.principalAmountBDT ?? loan.approvedAmountBDT ?? loan.requestedAmountBDT ?? 0;
+                      const monthly = loan.monthlyDeductionBDT ?? loan.monthlyInstallmentBDT ?? 0;
+                      const repaid = loan.repaidAmountBDT ?? loan.totalPaidBDT ?? 0;
+                      const remaining = loan.remainingAmountBDT ?? loan.remainingBalanceBDT ?? Math.max(0, principal - repaid);
+                      const tenure = loan.repaymentTenureMonths ?? loan.installmentDurationMonths ?? (loan.schedule?.length || 1);
+                      const paidCount = (loan.schedule || []).filter((s) => s.status === 'Deducted').length;
+                      const pct = Math.round((repaid / (principal || 1)) * 100);
+                      const currentLoanType = loan.loanType || loan.type || 'Salary Advance';
 
-                    return (
-                      <tr key={loan.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                        <td className="py-3 px-4">
-                          <div className="font-bold text-slate-900 dark:text-white">{loan.employeeName}</div>
-                          <span className="font-mono text-[10px] text-blue-600">{loan.employeeCode || loan.referenceNo}</span>
-                        </td>
-                        <td className="py-3 px-4">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              currentLoanType === 'Salary Advance'
-                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                                : 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
-                            }`}
-                          >
-                            {currentLoanType}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono font-bold">
-                          ৳ {principal.toLocaleString()}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono font-bold text-blue-600">
-                          ৳ {monthly.toLocaleString()}/mo
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono text-emerald-600 font-semibold">
-                          ৳ {repaid.toLocaleString()}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono font-black text-rose-600">
-                          ৳ {remaining.toLocaleString()}
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <div className="text-[11px] font-bold">
-                            {paidCount} of {tenure} months ({pct}%)
-                          </div>
-                          <div className="w-20 mx-auto bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden mt-1">
-                            <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${pct}%` }} />
-                          </div>
-                        </td>
-                        <td className="py-3 px-4">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              loan.status === 'Closed' || loan.status === 'Settled'
-                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                                : loan.status === 'Approved' || loan.status === 'Active'
-                                ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
-                                : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                            }`}
-                          >
-                            {loan.status}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <div className="inline-flex gap-1.5 items-center">
-                            <button
-                              onClick={() => setViewingLoanSchedule(loan)}
-                              className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 text-[11px] font-bold"
+                      return (
+                        <tr key={loan.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                          <td className="py-3 px-4">
+                            <div className="font-bold text-slate-900 dark:text-white">{loan.employeeName}</div>
+                            <span className="font-mono text-[10px] text-blue-600">{loan.employeeCode || loan.referenceNo}</span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                currentLoanType === 'Salary Advance'
+                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                                  : 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
+                              }`}
                             >
-                              Schedule
-                            </button>
-                            {loan.status === 'Pending' && canApprovePayroll && (
+                              {currentLoanType}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold">
+                            ৳ {principal.toLocaleString()}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-blue-600">
+                            ৳ {monthly.toLocaleString()}/mo
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-emerald-600 font-semibold">
+                            ৳ {repaid.toLocaleString()}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-black text-rose-600">
+                            ৳ {remaining.toLocaleString()}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="text-[11px] font-bold">
+                              {paidCount} of {tenure} months ({pct}%)
+                            </div>
+                            <div className="w-20 mx-auto bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden mt-1">
+                              <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${pct}%` }} />
+                            </div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                loan.status === 'Closed' || loan.status === 'Settled'
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                  : loan.status === 'Approved' || loan.status === 'Active'
+                                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                                  : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                              }`}
+                            >
+                              {loan.status}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="inline-flex gap-1.5 items-center">
                               <button
-                                onClick={() => approveAdvanceLoan(loan.id, currentUser?.name || 'Managing Director')}
-                                className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold shadow-2xs"
+                                onClick={() => setViewingLoanSchedule(loan)}
+                                className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 text-[11px] font-bold"
                               >
-                                Approve
+                                Schedule
                               </button>
-                            )}
-                            {loan.remainingAmountBDT > 0 && canDisbursePayroll && (
-                              <button
-                                onClick={() => setSettlingLoan(loan)}
-                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shadow-2xs"
-                              >
-                                Settle Now
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                              {loan.status === 'Pending' && canApprovePayroll && (
+                                <button
+                                  onClick={() => approveAdvanceLoan(loan.id, currentUser?.name || 'Managing Director')}
+                                  className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold shadow-2xs"
+                                >
+                                  Approve
+                                </button>
+                              )}
+                              {loan.remainingAmountBDT > 0 && canDisbursePayroll && (
+                                <button
+                                  onClick={() => setSettlingLoan(loan)}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shadow-2xs"
+                                >
+                                  Settle Now
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2470,56 +2519,64 @@ export const PayrollModule: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {overtimeRecords.map((ot) => (
-                    <tr key={ot.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                      <td className="py-3 px-4">
-                        <div className="font-bold text-slate-900 dark:text-white">{ot.employeeName}</div>
-                        <span className="font-mono text-[10px] text-blue-600">{ot.employeeCode}</span>
-                      </td>
-                      <td className="py-3 px-4 font-mono">{ot.date}</td>
-                      <td className="py-3 px-4">{ot.monthYear}</td>
-                      <td className="py-3 px-4 text-right font-bold">{ot.hours} hrs</td>
-                      <td className="py-3 px-4 text-right font-mono">৳ {ot.ratePerHourBDT}</td>
-                      <td className="py-3 px-4 text-right font-mono font-black text-blue-600">
-                        ৳ {(ot.totalAmountBDT || 0).toLocaleString()}
-                      </td>
-                      <td className="py-3 px-4 text-slate-500 italic max-w-xs truncate">{ot.reason}</td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            ot.status === 'Approved'
-                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                              : ot.status === 'Rejected'
-                              ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
-                              : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                          }`}
-                        >
-                          {ot.status}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        {ot.status === 'Pending' &&
-                          (canApprovePayroll ? (
-                            <div className="inline-flex gap-1">
-                              <button
-                                onClick={() => approveOvertimeRecord(ot.id, currentUser?.name || 'Factory Head')}
-                                className="px-2 py-1 rounded bg-emerald-600 text-white font-bold text-[10px]"
-                              >
-                                Approve
-                              </button>
-                              <button
-                                onClick={() => rejectOvertimeRecord(ot.id, 'Hours not authorized')}
-                                className="px-2 py-1 rounded bg-rose-600 text-white font-bold text-[10px]"
-                              >
-                                Reject
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="text-[11px] text-slate-400 font-semibold">Pending Approval</span>
-                          ))}
+                  {overtimeRecords.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="py-10 text-center text-slate-500 dark:text-slate-400">
+                        No overtime records found.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    overtimeRecords.map((ot) => (
+                      <tr key={ot.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-slate-900 dark:text-white">{ot.employeeName}</div>
+                          <span className="font-mono text-[10px] text-blue-600">{ot.employeeCode}</span>
+                        </td>
+                        <td className="py-3 px-4 font-mono">{ot.date}</td>
+                        <td className="py-3 px-4">{ot.monthYear}</td>
+                        <td className="py-3 px-4 text-right font-bold">{ot.hours} hrs</td>
+                        <td className="py-3 px-4 text-right font-mono">৳ {ot.ratePerHourBDT}</td>
+                        <td className="py-3 px-4 text-right font-mono font-black text-blue-600">
+                          ৳ {(ot.totalAmountBDT || 0).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-slate-500 italic max-w-xs truncate">{ot.reason}</td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              ot.status === 'Approved'
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                : ot.status === 'Rejected'
+                                ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                                : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                            }`}
+                          >
+                            {ot.status}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {ot.status === 'Pending' &&
+                            (canApprovePayroll ? (
+                              <div className="inline-flex gap-1">
+                                <button
+                                  onClick={() => approveOvertimeRecord(ot.id, currentUser?.name || 'Factory Head')}
+                                  className="px-2 py-1 rounded bg-emerald-600 text-white font-bold text-[10px]"
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  onClick={() => rejectOvertimeRecord(ot.id, 'Hours not authorized')}
+                                  className="px-2 py-1 rounded bg-rose-600 text-white font-bold text-[10px]"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 font-semibold">Pending Approval</span>
+                            ))}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2572,51 +2629,59 @@ export const PayrollModule: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {bonusRecords.map((b) => (
-                    <tr key={b.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                      <td className="py-3 px-4">
-                        <div className="font-bold text-slate-900 dark:text-white">{b.employeeName}</div>
-                        <span className="font-mono text-[10px] text-blue-600">{b.employeeCode}</span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                          {b.bonusType}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 font-mono">{b.monthYear}</td>
-                      <td className="py-3 px-4 text-right font-mono font-black text-emerald-600">
-                        ৳ {(b.amountBDT || 0).toLocaleString()}
-                      </td>
-                      <td className="py-3 px-4 text-slate-500 italic max-w-xs truncate">{b.remarks}</td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            b.status === 'Approved'
-                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                              : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                          }`}
-                        >
-                          {b.status}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
-                        {b.approvedBy || '-'}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        {b.status === 'Pending' &&
-                          (canApprovePayroll ? (
-                            <button
-                              onClick={() => approveBonusRecord(b.id, currentUser?.name || 'Managing Director')}
-                              className="px-2.5 py-1 rounded bg-emerald-600 text-white font-bold text-[10px]"
-                            >
-                              Approve
-                            </button>
-                          ) : (
-                            <span className="text-[11px] text-slate-400 font-semibold">Pending Approval</span>
-                          ))}
+                  {bonusRecords.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-10 text-center text-slate-500 dark:text-slate-400">
+                        No bonus or incentive records found.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    bonusRecords.map((b) => (
+                      <tr key={b.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-slate-900 dark:text-white">{b.employeeName}</div>
+                          <span className="font-mono text-[10px] text-blue-600">{b.employeeCode}</span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                            {b.bonusType}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-mono">{b.monthYear}</td>
+                        <td className="py-3 px-4 text-right font-mono font-black text-emerald-600">
+                          ৳ {(b.amountBDT || 0).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-slate-500 italic max-w-xs truncate">{b.remarks}</td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              b.status === 'Approved'
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                            }`}
+                          >
+                            {b.status}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
+                          {b.approvedBy || '-'}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {b.status === 'Pending' &&
+                            (canApprovePayroll ? (
+                              <button
+                                onClick={() => approveBonusRecord(b.id, currentUser?.name || 'Managing Director')}
+                                className="px-2.5 py-1 rounded bg-emerald-600 text-white font-bold text-[10px]"
+                              >
+                                Approve
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 font-semibold">Pending Approval</span>
+                            ))}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2709,6 +2774,18 @@ export const PayrollModule: React.FC = () => {
                   ৳ {(currentMonthRun.totalNetBDT || 0).toLocaleString()}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Empty Run Notice */}
+          {!currentMonthRun && (
+            <div className="p-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center space-y-2">
+              <p className="text-sm font-bold text-slate-700 dark:text-slate-200">
+                No payroll run generated for {selectedMonthYear}
+              </p>
+              <p className="text-xs text-slate-500">
+                Click Process {selectedMonthYear} Payroll above to calculate salaries from active employee salary structures.
+              </p>
             </div>
           )}
 
@@ -2840,7 +2917,11 @@ export const PayrollModule: React.FC = () => {
           </div>
 
           {/* Salary Sheet View */}
-          {currentMonthRun && (
+          {!currentMonthRun ? (
+            <div className="p-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+              No salary sheet generated for {selectedMonthYear}.
+            </div>
+          ) : (
             <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-[11px]">
@@ -2901,8 +2982,8 @@ export const PayrollModule: React.FC = () => {
                           ৳{(it.netSalaryBDT ?? it.netPayableBDT ?? 0).toLocaleString()}
                         </td>
                         <td className="py-2.5 px-3 font-mono text-[10px]">
-                          <div>{it.bankName || 'City Bank PLC'}</div>
-                          <span className="text-slate-400">{it.bankAccountNo || '110293847291'}</span>
+                          <div>{it.bankName || '—'}</div>
+                          <span className="text-slate-400">{it.bankAccountNo || '—'}</span>
                         </td>
                         <td className="py-2.5 px-3 text-center">
                           <span
@@ -2950,7 +3031,7 @@ export const PayrollModule: React.FC = () => {
                         recordSalaryPayment(currentMonthRun.id, item.employeeId, {
                           paymentDate: new Date().toISOString().slice(0, 10),
                           paymentMethod: 'Bank Transfer',
-                          bankAccountName: 'City Bank PLC',
+                          bankAccountName: item.bankName || 'Bank Transfer',
                           transactionReference: `EFT-${currentMonthRun.monthYear || currentMonthRun.payrollMonth}-${item.employeeCode || item.employeeId}`,
                           amountBDT: item.netSalaryBDT ?? item.netPayableBDT ?? 0,
                           disbursedBy: currentUser?.name || 'Accounts Head',
@@ -2966,7 +3047,11 @@ export const PayrollModule: React.FC = () => {
           </div>
 
           {/* Payments Pending & Paid Table */}
-          {currentMonthRun && (
+          {!currentMonthRun ? (
+            <div className="p-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+              No payroll run available for {selectedMonthYear}.
+            </div>
+          ) : (
             <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
@@ -2990,8 +3075,8 @@ export const PayrollModule: React.FC = () => {
                         </td>
                         <td className="py-3 px-4 text-slate-600 dark:text-slate-400">{it.designation}</td>
                         <td className="py-3 px-4 font-mono text-[11px]">
-                          <div>{it.bankName || 'City Bank PLC'}</div>
-                          <span className="text-slate-400">{it.bankAccountNo || '110293847291'}</span>
+                          <div>{it.bankName || '—'}</div>
+                          <span className="text-slate-400">{it.bankAccountNo || '—'}</span>
                         </td>
                         <td className="py-3 px-4 text-right font-mono font-black text-emerald-600 text-sm">
                           ৳ {(it.netSalaryBDT ?? it.netPayableBDT ?? 0).toLocaleString()}
@@ -3008,7 +3093,7 @@ export const PayrollModule: React.FC = () => {
                           </span>
                         </td>
                         <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
-                          {it.paymentMethod || 'City Bank EFT'}
+                          {it.paymentMethod || '—'}
                         </td>
                         <td className="py-3 px-4 text-right">
                           {it.paymentStatus !== 'Paid' ? (
@@ -3016,6 +3101,7 @@ export const PayrollModule: React.FC = () => {
                               <button
                                 onClick={() => {
                                   setSelectedRunItemForPayment({ runId: currentMonthRun.id, item: it });
+                                  setPayBankName(it.bankName || '');
                                   setPayRef(`EFT-${currentMonthRun.monthYear || currentMonthRun.payrollMonth}-${it.employeeCode || it.employeeId}`);
                                   setShowDisburseModal(true);
                                 }}
@@ -3065,7 +3151,11 @@ export const PayrollModule: React.FC = () => {
           </div>
 
           {/* Payslip employee cards */}
-          {currentMonthRun && (
+          {!currentMonthRun ? (
+            <div className="p-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+              No payroll payslips generated for {selectedMonthYear}.
+            </div>
+          ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {currentMonthRun.items.map((it) => (
                 <div
@@ -3208,7 +3298,7 @@ export const PayrollModule: React.FC = () => {
                     : 'Monthly Corporate Salary & Compensation Register'}
                 </h3>
                 <span className="text-xs text-slate-500">
-                  Period: {selectedMonthYear} • Ensec Lithium Batteries BD
+                  Period: {selectedMonthYear} • {payrollSettings?.companyName || systemSettings?.branding?.softwareName || 'Ensec ERP'}
                 </span>
               </div>
               <div className="text-right">
@@ -3235,28 +3325,36 @@ export const PayrollModule: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {currentMonthRun?.items.map((it) => (
-                    <tr key={it.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                      <td className="py-2.5 px-3 font-mono font-bold text-blue-600">{it.employeeCode}</td>
-                      <td className="py-2.5 px-3 font-bold text-slate-900 dark:text-white">{it.employeeName}</td>
-                      <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">{it.department}</td>
-                      <td className="py-2.5 px-3 text-right font-mono">৳{(it.totalGrossEarningsBDT ?? it.grossSalaryBDT ?? 0).toLocaleString()}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-rose-600">
-                        ৳{(it.totalDeductionsBDT || 0).toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono font-black text-emerald-600">
-                        ৳{(it.netSalaryBDT ?? it.netPayableBDT ?? 0).toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono text-[11px]">
-                        {it.bankName || 'City Bank'} - {it.bankAccountNo || '110293847291'}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                          {it.paymentStatus}
-                        </span>
+                  {!currentMonthRun || currentMonthRun.items.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-slate-500 dark:text-slate-400">
+                        No payroll report entries found for {selectedMonthYear}.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    currentMonthRun.items.map((it) => (
+                      <tr key={it.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                        <td className="py-2.5 px-3 font-mono font-bold text-blue-600">{it.employeeCode}</td>
+                        <td className="py-2.5 px-3 font-bold text-slate-900 dark:text-white">{it.employeeName}</td>
+                        <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">{it.department}</td>
+                        <td className="py-2.5 px-3 text-right font-mono">৳{(it.totalGrossEarningsBDT ?? it.grossSalaryBDT ?? 0).toLocaleString()}</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-rose-600">
+                          ৳{(it.totalDeductionsBDT || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-black text-emerald-600">
+                          ৳{(it.netSalaryBDT ?? it.netPayableBDT ?? 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-[11px]">
+                          {it.bankName || '—'}{it.bankAccountNo ? ` - ${it.bankAccountNo}` : ''}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            {it.paymentStatus}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -3488,11 +3586,13 @@ export const PayrollModule: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-black text-base tracking-tight text-slate-900">
-                    ENSEC LITHIUM BATTERIES BD
+                    {payrollSettings?.companyName || systemSettings?.branding?.softwareName || 'Ensec ERP'}
                   </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Head Office: Gulshan Avenue, Dhaka • Kushtia Battery Plant
-                  </p>
+                  {payrollSettings?.companyAddress && (
+                    <p className="text-[11px] text-slate-500">
+                      {payrollSettings.companyAddress}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="text-right">
@@ -3520,7 +3620,7 @@ export const PayrollModule: React.FC = () => {
               <div>
                 <span className="text-[10px] uppercase font-bold text-slate-400 block">BANK / ACCOUNT</span>
                 <span className="font-mono text-slate-800">
-                  {viewingPayslip.item.bankName || 'City Bank PLC'} ({viewingPayslip.item.bankAccountNo || '110293847291'})
+                  {viewingPayslip.item.bankName || '—'}{viewingPayslip.item.bankAccountNo ? ` (${viewingPayslip.item.bankAccountNo})` : ''}
                 </span>
               </div>
               <div>
