@@ -94,6 +94,7 @@ import {
   EMPLOYEE_ATTENDANCES_TABLE_SQL,
 } from '../../types/payroll.ts';
 import { FieldForceRep } from '../../types/erp.ts';
+import { EmployeeAttendanceCardModal } from './EmployeeAttendanceCardModal.tsx';
 
 type PayrollTab =
   | 'dashboard'
@@ -198,6 +199,11 @@ export const PayrollModule: React.FC = () => {
   const [attOfficeFilter, setAttOfficeFilter] = useState<string>('All');
   const [attStatusFilter, setAttStatusFilter] = useState<string>('All');
   const [historyEmployee, setHistoryEmployee] = useState<FieldForceRep | null>(null);
+  const [attendanceCardModal, setAttendanceCardModal] = useState<{
+    isOpen: boolean;
+    employeeId?: string;
+    monthYear?: string;
+  }>({ isOpen: false });
   const [dailyGridDrafts, setDailyGridDrafts] = useState<
     Record<string, { inTime: string; outTime: string }>
   >({});
@@ -1857,7 +1863,7 @@ export const PayrollModule: React.FC = () => {
           </div>
 
           {/* KPI Summary Strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
             <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
               <div className="text-[11px] font-semibold text-slate-500">Present</div>
               <div className="text-xl font-black tabular-nums text-emerald-600 mt-0.5">{attReportStats.present}</div>
@@ -1882,6 +1888,25 @@ export const PayrollModule: React.FC = () => {
               <div className="text-[11px] font-semibold text-rose-600">Rejected GPS</div>
               <div className="text-xl font-black tabular-nums text-rose-600 mt-0.5">{attReportStats.rejected}</div>
             </div>
+            <button
+              type="button"
+              onClick={() =>
+                setAttendanceCardModal({
+                  isOpen: true,
+                  employeeId: employeePeriodSummaries[0]?.emp.id || fieldForceReps[0]?.id,
+                  monthYear: (attDateFrom || selectedMonthYear).slice(0, 7),
+                })
+              }
+              className="p-3.5 rounded-2xl bg-blue-50/70 dark:bg-blue-950/30 hover:bg-blue-100/80 dark:hover:bg-blue-950/60 border border-blue-200 dark:border-blue-800/70 text-left transition-colors group"
+            >
+              <div className="text-[11px] font-bold text-blue-700 dark:text-blue-300 flex items-center justify-between gap-1">
+                <span>Attendance Card</span>
+                <FileText className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform" />
+              </div>
+              <div className="text-xs font-semibold text-blue-600 dark:text-blue-400 mt-1.5">
+                Open &amp; Print A4 →
+              </div>
+            </button>
           </div>
 
           {/* SUB-VIEW 1: EMPLOYEE-WISE ATTENDANCE REPORT (15 COLUMNS + SUMMARY) */}
@@ -1916,6 +1941,7 @@ export const PayrollModule: React.FC = () => {
                         <th className="py-2.5 px-3 text-center">Absent</th>
                         <th className="py-2.5 px-3 text-right">Work Hours</th>
                         <th className="py-2.5 px-3 text-center">Rejected GPS</th>
+                        <th className="py-2.5 px-3 text-center">Attendance Card</th>
                         <th className="py-2.5 px-3 text-right">History</th>
                       </tr>
                     </thead>
@@ -1948,6 +1974,22 @@ export const PayrollModule: React.FC = () => {
                           </td>
                           <td className="py-2.5 px-3 text-center font-mono font-bold text-rose-600 tabular-nums">
                             {row.rejectedCount > 0 ? row.rejectedCount : '0'}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAttendanceCardModal({
+                                  isOpen: true,
+                                  employeeId: row.emp.id,
+                                  monthYear: (attDateFrom || selectedMonthYear).slice(0, 7),
+                                })
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/70 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 font-bold text-[11px] whitespace-nowrap"
+                            >
+                              <FileText className="w-3 h-3" />
+                              <span>Attendance Card</span>
+                            </button>
                           </td>
                           <td className="py-2.5 px-3 text-right">
                             <button
@@ -2026,6 +2068,21 @@ export const PayrollModule: React.FC = () => {
                       <span>{isSyncingAttendance ? 'Syncing...' : 'Sync to Supabase'}</span>
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAttendanceCardModal({
+                        isOpen: true,
+                        employeeId: fieldForceReps[0]?.id,
+                        monthYear: (selectedDateForAtt || selectedMonthYear).slice(0, 7),
+                      })
+                    }
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/50 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 text-xs font-bold transition-colors"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Attendance Card</span>
+                  </button>
 
                   <input
                     type="date"
@@ -5291,6 +5348,13 @@ export const PayrollModule: React.FC = () => {
           </div>
         </div>
       )}
+
+      <EmployeeAttendanceCardModal
+        isOpen={attendanceCardModal.isOpen}
+        initialEmployeeId={attendanceCardModal.employeeId}
+        initialMonthYear={attendanceCardModal.monthYear}
+        onClose={() => setAttendanceCardModal({ isOpen: false })}
+      />
     </div>
   );
 };
