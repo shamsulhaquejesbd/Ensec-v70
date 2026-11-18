@@ -330,6 +330,7 @@ export const PayrollModule: React.FC = () => {
     'Office Employee',
     'Field Employee',
     'Factory Employee',
+    'Production',
     'Warehouse Employee',
     'Management Employee',
   ];
@@ -3402,27 +3403,6 @@ export const PayrollModule: React.FC = () => {
                   onChange={(e) =>
                     updatePayrollSettings({
                       standardDailyHours: Number(e.target.value) || 8,
-                    })
-                  }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold disabled:opacity-60 disabled:cursor-not-allowed"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Overtime Multiplier Rate
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  disabled={!canConfigurePayrollRules}
-                  value={payrollSettings?.overtimeConfig?.hourlyRateMultiplier ?? 2.0}
-                  onChange={(e) =>
-                    updatePayrollSettings({
-                      overtimeConfig: {
-                        ...(payrollSettings?.overtimeConfig || {}),
-                        hourlyRateMultiplier: Number(e.target.value) || 2.0,
-                      },
                     })
                   }
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold disabled:opacity-60 disabled:cursor-not-allowed"

@@ -1245,6 +1245,7 @@ export const FieldForcePage: React.FC = () => {
           { id: 'Office Employee', label: 'Office Staff', count: fieldForceReps.filter((r) => r.employeeCategory === 'Office Employee').length },
           { id: 'Field Employee', label: 'Field Force & Sales', count: fieldForceReps.filter((r) => r.employeeCategory === 'Field Employee' || !r.employeeCategory).length },
           { id: 'Factory Employee', label: 'Factory & Production', count: fieldForceReps.filter((r) => r.employeeCategory === 'Factory Employee').length },
+          { id: 'Production', label: 'Production', count: fieldForceReps.filter((r) => r.employeeCategory === 'Production').length },
           { id: 'Warehouse Employee', label: 'Warehouse & Logistics', count: fieldForceReps.filter((r) => r.employeeCategory === 'Warehouse Employee').length },
           { id: 'Management Employee', label: 'Management & C-Suite', count: fieldForceReps.filter((r) => r.employeeCategory === 'Management Employee').length },
         ].map((tab) => {
@@ -1463,6 +1464,7 @@ export const FieldForcePage: React.FC = () => {
                               <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold ${
                                 rep.employeeCategory === 'Office Employee' ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800' :
                                 rep.employeeCategory === 'Factory Employee' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800' :
+                                rep.employeeCategory === 'Production' ? 'bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-300 border border-teal-200 dark:border-teal-800' :
                                 rep.employeeCategory === 'Warehouse Employee' ? 'bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800' :
                                 rep.employeeCategory === 'Management Employee' ? 'bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300 border border-rose-200 dark:border-rose-800' :
                                 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
@@ -2208,6 +2210,7 @@ export const FieldForcePage: React.FC = () => {
                           <option value="Field Employee">Field Employee</option>
                           <option value="Office Employee">Office Employee</option>
                           <option value="Factory Employee">Factory Employee</option>
+                          <option value="Production">Production</option>
                           <option value="Warehouse Employee">Warehouse Employee</option>
                           <option value="Management Employee">Management Employee</option>
                           <option value="Other Employee">Other Employee</option>
@@ -3617,6 +3620,7 @@ export const FieldForcePage: React.FC = () => {
                           <option value="Field Employee">Field Employee</option>
                           <option value="Office Employee">Office Employee</option>
                           <option value="Factory Employee">Factory Employee</option>
+                          <option value="Production">Production</option>
                           <option value="Warehouse Employee">Warehouse Employee</option>
                           <option value="Management Employee">Management Employee</option>
                           <option value="Other Employee">Other Employee</option>

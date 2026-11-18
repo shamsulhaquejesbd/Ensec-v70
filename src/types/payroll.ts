@@ -11,6 +11,7 @@ export type EmployeeCategory =
   | 'Office Employee'
   | 'Field Employee'
   | 'Factory Employee'
+  | 'Production'
   | 'Warehouse Employee'
   | 'Management Employee'
   | 'Other Employee';

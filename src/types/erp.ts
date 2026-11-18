@@ -1230,7 +1230,7 @@ export interface FieldForceRep {
   // Comprehensive Central Employee Management Fields
   photoUrl?: string;
   gender?: 'Male' | 'Female' | string;
-  employeeCategory?: 'Office Employee' | 'Field Employee' | 'Factory Employee' | 'Warehouse Employee' | 'Management Employee' | 'Other Employee' | string;
+  employeeCategory?: 'Office Employee' | 'Field Employee' | 'Factory Employee' | 'Production' | 'Warehouse Employee' | 'Management Employee' | 'Other Employee' | string;
   employmentType?: 'Permanent' | 'Contractual' | 'Probationary' | 'Intern' | 'Part-time' | string;
   employmentStatus?: 'Active' | 'On Leave' | 'Suspended' | 'Resigned' | 'Terminated' | string;
   presentAddress?: string;
