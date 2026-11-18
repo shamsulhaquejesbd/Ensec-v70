@@ -146,7 +146,25 @@ export const PayrollModule: React.FC = () => {
     deleteMonthlyPayrollRun,
     recordSalaryPayment,
     updatePayrollSettings,
+    hasPageAccess,
+    hasPageAction,
   } = useERP();
+
+  // Granular User & Permission flags for Payroll & Human Resources ('payroll')
+  const canViewPayroll = hasPageAccess('payroll');
+  const canCreatePayroll = hasPageAction('payroll', 'create_payroll');
+  const canApprovePayroll = hasPageAction('payroll', 'approve_payroll');
+  const canDisbursePayroll = hasPageAction('payroll', 'disburse');
+  const canEditSalaryStructure = hasPageAction('payroll', 'edit_salary_structure');
+  const canExportPayroll = hasPageAction('payroll', 'export');
+  const canConfigurePayrollRules = canCreatePayroll || canApprovePayroll;
+  const canAccessOvertimeHub = hasPageAccess('overtime-management');
+  const isReadOnlyPayrollUser =
+    !canCreatePayroll &&
+    !canApprovePayroll &&
+    !canDisbursePayroll &&
+    !canEditSalaryStructure &&
+    !canExportPayroll;
 
   // Active top-level Tab
   const [activeTab, setActiveTab] = useState<PayrollTab>('dashboard');
@@ -814,6 +832,22 @@ export const PayrollModule: React.FC = () => {
     return `Taka ${words.trim()} Only`;
   };
 
+  if (!canViewPayroll) {
+    return (
+      <div className="p-8 bg-white dark:bg-slate-900 rounded-2xl border border-rose-200 dark:border-rose-900/50 text-center space-y-3 max-w-xl mx-auto mt-10">
+        <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 flex items-center justify-center mx-auto">
+          <Lock className="w-6 h-6" />
+        </div>
+        <h2 className="text-base font-bold text-slate-900 dark:text-white">
+          Access Restricted — Payroll & Human Resources
+        </h2>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Your account does not currently have the <b>View Payroll & Staff</b> permission. Contact your Super Admin to request access.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 w-full pb-16">
       {/* ========================================== */}
@@ -826,11 +860,16 @@ export const PayrollModule: React.FC = () => {
               <DollarSign className="w-6 h-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
                   Corporate Payroll & Compensation Engine
                 </h1>
-              
+                {isReadOnlyPayrollUser && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-300">
+                    <Lock className="w-3 h-3" />
+                    Read-Only Access
+                  </span>
+                )}
               </div>
             
             </div>
@@ -852,16 +891,18 @@ export const PayrollModule: React.FC = () => {
               </select>
             </div>
 
-            <button
-              onClick={() => {
-                const runId = generateMonthlySalaryRun(selectedMonthYear);
-                setActiveTab('processing');
-              }}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-all"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Process {selectedMonthYear} Payroll</span>
-            </button>
+            {canCreatePayroll && (
+              <button
+                onClick={() => {
+                  const runId = generateMonthlySalaryRun(selectedMonthYear);
+                  if (runId) setActiveTab('processing');
+                }}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-all"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Process {selectedMonthYear} Payroll</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1201,9 +1242,7 @@ export const PayrollModule: React.FC = () => {
               <h2 className="text-sm font-bold text-slate-900 dark:text-white">
                 Employee Salary Structure Master
               </h2>
-              <p className="text-xs text-slate-500">
-                Configure basic pay, house rent, medical, conveyance, mobile and allowances for each central employee.
-              </p>
+              
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
               {salaryStructuresDbStatus.synced ? (
@@ -1221,37 +1260,39 @@ export const PayrollModule: React.FC = () => {
                     : 'Supabase Sync Needed'}
                 </span>
               ) : null}
-              <button
-                type="button"
-                disabled={isSyncingStructures}
-                onClick={async () => {
-                  setIsSyncingStructures(true);
-                  setStructureFeedback(null);
-                  const res = await syncSalaryStructuresToSupabase();
-                  setIsSyncingStructures(false);
-                  if (res.success) {
-                    setStructureFeedback({
-                      type: 'success',
-                      message:
-                        res.syncedCount > 0
-                          ? `Successfully synced ${res.syncedCount} salary structure(s) to Supabase.`
-                          : 'Supabase employee_salary_structures connection verified and ready.',
-                    });
-                  } else {
-                    setStructureFeedback({
-                      type: 'warning',
-                      message:
-                        res.error ||
-                        'Could not save salary structures to Supabase. Run the SQL policy below in Supabase SQL Editor.',
-                      sqlFix: res.sqlFix || SALARY_STRUCTURES_TABLE_SQL,
-                    });
-                  }
-                }}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold transition-colors disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3 h-3 ${isSyncingStructures ? 'animate-spin' : ''}`} />
-                <span>{isSyncingStructures ? 'Syncing...' : 'Sync to Supabase'}</span>
-              </button>
+              {canEditSalaryStructure && (
+                <button
+                  type="button"
+                  disabled={isSyncingStructures}
+                  onClick={async () => {
+                    setIsSyncingStructures(true);
+                    setStructureFeedback(null);
+                    const res = await syncSalaryStructuresToSupabase();
+                    setIsSyncingStructures(false);
+                    if (res.success) {
+                      setStructureFeedback({
+                        type: 'success',
+                        message:
+                          res.syncedCount > 0
+                            ? `Successfully synced ${res.syncedCount} salary structure(s) to Supabase.`
+                            : 'Supabase employee_salary_structures connection verified and ready.',
+                      });
+                    } else {
+                      setStructureFeedback({
+                        type: 'warning',
+                        message:
+                          res.error ||
+                          'Could not save salary structures to Supabase. Run the SQL policy below in Supabase SQL Editor.',
+                        sqlFix: res.sqlFix || SALARY_STRUCTURES_TABLE_SQL,
+                      });
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isSyncingStructures ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingStructures ? 'Syncing...' : 'Sync to Supabase'}</span>
+                </button>
+              )}
               <span className="text-xs text-slate-500">
                 Configured: <b>{salaryStructures.length}</b> of {fieldForceReps.length}
               </span>
@@ -1286,7 +1327,8 @@ export const PayrollModule: React.FC = () => {
             </div>
           )}
 
-          {!salaryStructuresDbStatus.synced &&
+          {canEditSalaryStructure &&
+            !salaryStructuresDbStatus.synced &&
             (salaryStructuresDbStatus.status === 'rls_blocked' ||
               salaryStructuresDbStatus.status === 'table_missing' ||
               salaryStructuresDbStatus.status === 'error' ||
@@ -1437,39 +1479,46 @@ export const PayrollModule: React.FC = () => {
                             </span>
                           </td>
                           <td className="py-3 px-4 text-right">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedEmployeeForStructure(emp);
-                                if (str) {
-                                  setEditingStructure(str);
-                                  setStrBasic(str.basicSalaryBDT ?? 0);
-                                  setStrHouseRent(str.houseRentBDT ?? 0);
-                                  setStrMedical(str.medicalAllowanceBDT ?? 0);
-                                  setStrConveyance(str.conveyanceAllowanceBDT ?? 0);
-                                  setStrMobile(str.mobileAllowanceBDT ?? 0);
-                                  setStrSpecial(str.specialAllowanceBDT ?? 0);
-                                  setStrOther(str.otherAllowancesBDT ?? 0);
-                                  setStrEffectiveFrom(str.effectiveFrom || new Date().toISOString().slice(0, 10));
-                                } else {
-                                  const defaultBasic = emp.basicSalaryBDT ?? 30000;
-                                  setEditingStructure(null);
-                                  setStrBasic(defaultBasic);
-                                  setStrHouseRent(Math.round(defaultBasic * 0.5));
-                                  setStrMedical(Math.round(defaultBasic * 0.1));
-                                  setStrConveyance(emp.conveyanceBDT ?? 0);
-                                  setStrMobile(emp.mobileAllowanceBDT ?? 0);
-                                  setStrSpecial(0);
-                                  setStrOther(0);
-                                  setStrEffectiveFrom(new Date().toISOString().slice(0, 10));
-                                }
-                                setStrRevisionReason('');
-                                setShowStructureModal(true);
-                              }}
-                              className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 text-[11px] font-bold"
-                            >
-                              Edit Structure
-                            </button>
+                            {canEditSalaryStructure ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedEmployeeForStructure(emp);
+                                  if (str) {
+                                    setEditingStructure(str);
+                                    setStrBasic(str.basicSalaryBDT ?? 0);
+                                    setStrHouseRent(str.houseRentBDT ?? 0);
+                                    setStrMedical(str.medicalAllowanceBDT ?? 0);
+                                    setStrConveyance(str.conveyanceAllowanceBDT ?? 0);
+                                    setStrMobile(str.mobileAllowanceBDT ?? 0);
+                                    setStrSpecial(str.specialAllowanceBDT ?? 0);
+                                    setStrOther(str.otherAllowancesBDT ?? 0);
+                                    setStrEffectiveFrom(str.effectiveFrom || new Date().toISOString().slice(0, 10));
+                                  } else {
+                                    const defaultBasic = emp.basicSalaryBDT ?? 30000;
+                                    setEditingStructure(null);
+                                    setStrBasic(defaultBasic);
+                                    setStrHouseRent(Math.round(defaultBasic * 0.5));
+                                    setStrMedical(Math.round(defaultBasic * 0.1));
+                                    setStrConveyance(emp.conveyanceBDT ?? 0);
+                                    setStrMobile(emp.mobileAllowanceBDT ?? 0);
+                                    setStrSpecial(0);
+                                    setStrOther(0);
+                                    setStrEffectiveFrom(new Date().toISOString().slice(0, 10));
+                                  }
+                                  setStrRevisionReason('');
+                                  setShowStructureModal(true);
+                                }}
+                                className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 text-[11px] font-bold"
+                              >
+                                Edit Structure
+                              </button>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400">
+                                <Lock className="w-3 h-3" />
+                                View Only
+                              </span>
+                            )}
                           </td>
                         </tr>
                       );
@@ -1551,11 +1600,9 @@ export const PayrollModule: React.FC = () => {
             <div>
               <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <MapPin className="w-4 h-4 text-blue-600" />
-                <span>Attendance & GPS Geofencing Report</span>
+                <span>Attendance Report</span>
               </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Employee-wise GPS attendance verification, shift late calculation, period summaries, and rejected attempt audit.
-              </p>
+              
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -1593,13 +1640,15 @@ export const PayrollModule: React.FC = () => {
                 </button>
               </div>
 
-              <button
-                onClick={handleExportAttendanceExcel}
-                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5" />
-                <span>Export Excel</span>
-              </button>
+              {canExportPayroll && (
+                <button
+                  onClick={handleExportAttendanceExcel}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Export Excel</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1828,9 +1877,7 @@ export const PayrollModule: React.FC = () => {
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                     Daily Attendance & Biometric / Admin Override Grid
                   </h3>
-                  <p className="text-xs text-slate-500">
-                    Manage daily statuses for payroll calculations alongside live GPS check-ins.
-                  </p>
+                  
                 </div>
                 <div className="flex items-center gap-2">
                   <input
@@ -1839,30 +1886,32 @@ export const PayrollModule: React.FC = () => {
                     onChange={(e) => setSelectedDateForAtt(e.target.value)}
                     className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold"
                   />
-                  <button
-                    onClick={() => {
-                      const bulk = fieldForceReps.map((emp) => ({
-                        employeeId: emp.id,
-                        employeeCode: emp.code,
-                        employeeName: emp.name,
-                        department: emp.department,
-                        designation: emp.designation,
-                        assignedOfficeId: emp.assignedOfficeId,
-                        assignedOfficeName: emp.assignedOfficeName || emp.branchWorkplace,
-                        date: selectedDateForAtt,
-                        status: 'Present' as AttendanceStatus,
-                        inTime: emp.shiftStartTime || payrollSettings?.shiftStartTime || DEFAULT_SHIFT_START_TIME,
-                        outTime: emp.shiftEndTime || payrollSettings?.shiftEndTime || DEFAULT_SHIFT_END_TIME,
-                        overtimeHours: 0,
-                        gpsValidationStatus: 'Manual' as const,
-                      }));
-                      bulkMarkAttendance(bulk);
-                    }}
-                    className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>Mark All Present ({selectedDateForAtt})</span>
-                  </button>
+                  {canCreatePayroll && (
+                    <button
+                      onClick={() => {
+                        const bulk = fieldForceReps.map((emp) => ({
+                          employeeId: emp.id,
+                          employeeCode: emp.code,
+                          employeeName: emp.name,
+                          department: emp.department,
+                          designation: emp.designation,
+                          assignedOfficeId: emp.assignedOfficeId,
+                          assignedOfficeName: emp.assignedOfficeName || emp.branchWorkplace,
+                          date: selectedDateForAtt,
+                          status: 'Present' as AttendanceStatus,
+                          inTime: emp.shiftStartTime || payrollSettings?.shiftStartTime || DEFAULT_SHIFT_START_TIME,
+                          outTime: emp.shiftEndTime || payrollSettings?.shiftEndTime || DEFAULT_SHIFT_END_TIME,
+                          overtimeHours: 0,
+                          gpsValidationStatus: 'Manual' as const,
+                        }));
+                        bulkMarkAttendance(bulk);
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Mark All Present ({selectedDateForAtt})</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1956,37 +2005,44 @@ export const PayrollModule: React.FC = () => {
                               </div>
                             </td>
                             <td className="py-3 px-4 text-right">
-                              <div className="inline-flex gap-1">
-                                {(['Present', 'Late', 'Half Day', 'Absent'] as AttendanceStatus[]).map((st) => (
-                                  <button
-                                    key={st}
-                                    onClick={() => {
-                                      markAttendance({
-                                        employeeId: emp.id,
-                                        employeeCode: emp.code,
-                                        employeeName: emp.name,
-                                        department: emp.department,
-                                        designation: emp.designation,
-                                        assignedOfficeId: emp.assignedOfficeId,
-                                        assignedOfficeName: emp.assignedOfficeName || emp.branchWorkplace,
-                                        date: selectedDateForAtt,
-                                        status: st,
-                                        inTime: st === 'Late' ? '10:15' : emp.shiftStartTime || '09:00',
-                                        outTime: st === 'Half Day' ? '13:00' : emp.shiftEndTime || '18:00',
-                                        overtimeHours: 0,
-                                        gpsValidationStatus: 'Manual',
-                                      });
-                                    }}
-                                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
-                                      todayRec && status === st
-                                        ? 'bg-blue-600 text-white'
-                                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
-                                    }`}
-                                  >
-                                    {st}
-                                  </button>
-                                ))}
-                              </div>
+                              {canCreatePayroll ? (
+                                <div className="inline-flex gap-1">
+                                  {(['Present', 'Late', 'Half Day', 'Absent'] as AttendanceStatus[]).map((st) => (
+                                    <button
+                                      key={st}
+                                      onClick={() => {
+                                        markAttendance({
+                                          employeeId: emp.id,
+                                          employeeCode: emp.code,
+                                          employeeName: emp.name,
+                                          department: emp.department,
+                                          designation: emp.designation,
+                                          assignedOfficeId: emp.assignedOfficeId,
+                                          assignedOfficeName: emp.assignedOfficeName || emp.branchWorkplace,
+                                          date: selectedDateForAtt,
+                                          status: st,
+                                          inTime: st === 'Late' ? '10:15' : emp.shiftStartTime || '09:00',
+                                          outTime: st === 'Half Day' ? '13:00' : emp.shiftEndTime || '18:00',
+                                          overtimeHours: 0,
+                                          gpsValidationStatus: 'Manual',
+                                        });
+                                      }}
+                                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                                        todayRec && status === st
+                                          ? 'bg-blue-600 text-white'
+                                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                                      }`}
+                                    >
+                                      {st}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400">
+                                  <Lock className="w-3 h-3" />
+                                  View Only
+                                </span>
+                              )}
                             </td>
                           </tr>
                         );
@@ -2094,16 +2150,18 @@ export const PayrollModule: React.FC = () => {
                 Annual, Casual, Sick, Maternity, and Unpaid Leave with approval authority.
               </p>
             </div>
-            <button
-              onClick={() => {
-                setLeaveEmployeeId(fieldForceReps[0]?.id || '');
-                setShowLeaveModal(true);
-              }}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Apply Leave</span>
-            </button>
+            {canCreatePayroll && (
+              <button
+                onClick={() => {
+                  setLeaveEmployeeId(fieldForceReps[0]?.id || '');
+                  setShowLeaveModal(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Apply Leave</span>
+              </button>
+            )}
           </div>
 
           {/* Quota Highlights */}
@@ -2190,22 +2248,25 @@ export const PayrollModule: React.FC = () => {
                         {l.approvedBy || '-'}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {l.status === 'Pending' && (
-                          <div className="inline-flex gap-1">
-                            <button
-                              onClick={() => approveLeave(l.id, currentUser?.name || 'Managing Director')}
-                              className="px-2 py-1 rounded bg-emerald-600 text-white font-bold text-[10px] hover:bg-emerald-700"
-                            >
-                              Approve
-                            </button>
-                            <button
-                              onClick={() => rejectLeave(l.id, 'Management operational constraint')}
-                              className="px-2 py-1 rounded bg-rose-600 text-white font-bold text-[10px] hover:bg-rose-700"
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        )}
+                        {l.status === 'Pending' &&
+                          (canApprovePayroll ? (
+                            <div className="inline-flex gap-1">
+                              <button
+                                onClick={() => approveLeave(l.id, currentUser?.name || 'Managing Director')}
+                                className="px-2 py-1 rounded bg-emerald-600 text-white font-bold text-[10px] hover:bg-emerald-700"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => rejectLeave(l.id, 'Management operational constraint')}
+                                className="px-2 py-1 rounded bg-rose-600 text-white font-bold text-[10px] hover:bg-rose-700"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 font-semibold">Pending Approval</span>
+                          ))}
                       </td>
                     </tr>
                   ))}
@@ -2235,16 +2296,18 @@ export const PayrollModule: React.FC = () => {
                 Automated monthly salary deduction, installment schedules, early settlement, and ledger tracking.
               </p>
             </div>
-            <button
-              onClick={() => {
-                setLoanEmployeeId(fieldForceReps[0]?.id || '');
-                setShowLoanModal(true);
-              }}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Apply Loan / Advance</span>
-            </button>
+            {canCreatePayroll && (
+              <button
+                onClick={() => {
+                  setLoanEmployeeId(fieldForceReps[0]?.id || '');
+                  setShowLoanModal(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Apply Loan / Advance</span>
+              </button>
+            )}
           </div>
 
           {/* Loans Table */}
@@ -2333,7 +2396,15 @@ export const PayrollModule: React.FC = () => {
                             >
                               Schedule
                             </button>
-                            {loan.remainingAmountBDT > 0 && (
+                            {loan.status === 'Pending' && canApprovePayroll && (
+                              <button
+                                onClick={() => approveAdvanceLoan(loan.id, currentUser?.name || 'Managing Director')}
+                                className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold shadow-2xs"
+                              >
+                                Approve
+                              </button>
+                            )}
+                            {loan.remainingAmountBDT > 0 && canDisbursePayroll && (
                               <button
                                 onClick={() => setSettlingLoan(loan)}
                                 className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shadow-2xs"
@@ -2367,16 +2438,18 @@ export const PayrollModule: React.FC = () => {
                 Hourly rate formula: `(Basic / 208 hrs) * Multiplier ({payrollSettings?.overtimeConfig?.hourlyRateMultiplier ?? 1.5}x)`.
               </p>
             </div>
-            <button
-              onClick={() => {
-                setOtEmployeeId(fieldForceReps[0]?.id || '');
-                setShowOvertimeModal(true);
-              }}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Log Overtime</span>
-            </button>
+            {canCreatePayroll && (
+              <button
+                onClick={() => {
+                  setOtEmployeeId(fieldForceReps[0]?.id || '');
+                  setShowOvertimeModal(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Log Overtime</span>
+              </button>
+            )}
           </div>
 
           {/* Overtime Table */}
@@ -2425,22 +2498,25 @@ export const PayrollModule: React.FC = () => {
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {ot.status === 'Pending' && (
-                          <div className="inline-flex gap-1">
-                            <button
-                              onClick={() => approveOvertimeRecord(ot.id, currentUser?.name || 'Factory Head')}
-                              className="px-2 py-1 rounded bg-emerald-600 text-white font-bold text-[10px]"
-                            >
-                              Approve
-                            </button>
-                            <button
-                              onClick={() => rejectOvertimeRecord(ot.id, 'Hours not authorized')}
-                              className="px-2 py-1 rounded bg-rose-600 text-white font-bold text-[10px]"
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        )}
+                        {ot.status === 'Pending' &&
+                          (canApprovePayroll ? (
+                            <div className="inline-flex gap-1">
+                              <button
+                                onClick={() => approveOvertimeRecord(ot.id, currentUser?.name || 'Factory Head')}
+                                className="px-2 py-1 rounded bg-emerald-600 text-white font-bold text-[10px]"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => rejectOvertimeRecord(ot.id, 'Hours not authorized')}
+                                className="px-2 py-1 rounded bg-rose-600 text-white font-bold text-[10px]"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 font-semibold">Pending Approval</span>
+                          ))}
                       </td>
                     </tr>
                   ))}
@@ -2465,16 +2541,18 @@ export const PayrollModule: React.FC = () => {
                 Festival Bonus, Performance Bonus, and Field Force target achievement bonuses.
               </p>
             </div>
-            <button
-              onClick={() => {
-                setBnsEmployeeId(fieldForceReps[0]?.id || '');
-                setShowBonusModal(true);
-              }}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Bonus / Incentive</span>
-            </button>
+            {canCreatePayroll && (
+              <button
+                onClick={() => {
+                  setBnsEmployeeId(fieldForceReps[0]?.id || '');
+                  setShowBonusModal(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Bonus / Incentive</span>
+              </button>
+            )}
           </div>
 
           {/* Bonuses Table */}
@@ -2525,14 +2603,17 @@ export const PayrollModule: React.FC = () => {
                         {b.approvedBy || '-'}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {b.status === 'Pending' && (
-                          <button
-                            onClick={() => approveBonusRecord(b.id, currentUser?.name || 'Managing Director')}
-                            className="px-2.5 py-1 rounded bg-emerald-600 text-white font-bold text-[10px]"
-                          >
-                            Approve
-                          </button>
-                        )}
+                        {b.status === 'Pending' &&
+                          (canApprovePayroll ? (
+                            <button
+                              onClick={() => approveBonusRecord(b.id, currentUser?.name || 'Managing Director')}
+                              className="px-2.5 py-1 rounded bg-emerald-600 text-white font-bold text-[10px]"
+                            >
+                              Approve
+                            </button>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 font-semibold">Pending Approval</span>
+                          ))}
                       </td>
                     </tr>
                   ))}
@@ -2572,15 +2653,17 @@ export const PayrollModule: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => generateMonthlySalaryRun(selectedMonthYear)}
-                className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-200 font-bold text-xs flex items-center gap-1.5"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Re-Calculate Run</span>
-              </button>
+              {canCreatePayroll && (
+                <button
+                  onClick={() => generateMonthlySalaryRun(selectedMonthYear)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-200 font-bold text-xs flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Re-Calculate Run</span>
+                </button>
+              )}
 
-              {currentMonthRun && currentMonthRun.status === 'Draft' && (
+              {currentMonthRun && currentMonthRun.status === 'Draft' && canApprovePayroll && (
                 <button
                   onClick={() =>
                     finalizeMonthlyPayrollRun(
@@ -2744,13 +2827,15 @@ export const PayrollModule: React.FC = () => {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => window.print()}
-                className="px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Print Salary Sheet</span>
-              </button>
+              {canExportPayroll && (
+                <button
+                  onClick={() => window.print()}
+                  className="px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Salary Sheet</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -2854,28 +2939,30 @@ export const PayrollModule: React.FC = () => {
                 Disburse salaries via Bank EFT (City Bank, Eastern Bank), Cash in Hand, or MFS (bKash/Nagad).
               </p>
             </div>
-            {currentMonthRun && currentMonthRun.items.some((i) => i.paymentStatus !== 'Paid') && (
-              <button
-                onClick={() => {
-                  currentMonthRun.items
-                    .filter((i) => i.paymentStatus !== 'Paid')
-                    .forEach((item) => {
-                      recordSalaryPayment(currentMonthRun.id, item.employeeId, {
-                        paymentDate: new Date().toISOString().slice(0, 10),
-                        paymentMethod: 'Bank Transfer',
-                        bankAccountName: 'City Bank PLC',
-                        transactionReference: `EFT-${currentMonthRun.monthYear || currentMonthRun.payrollMonth}-${item.employeeCode || item.employeeId}`,
-                        amountBDT: item.netSalaryBDT ?? item.netPayableBDT ?? 0,
-                        disbursedBy: currentUser?.name || 'Accounts Head',
+            {canDisbursePayroll &&
+              currentMonthRun &&
+              currentMonthRun.items.some((i) => i.paymentStatus !== 'Paid') && (
+                <button
+                  onClick={() => {
+                    currentMonthRun.items
+                      .filter((i) => i.paymentStatus !== 'Paid')
+                      .forEach((item) => {
+                        recordSalaryPayment(currentMonthRun.id, item.employeeId, {
+                          paymentDate: new Date().toISOString().slice(0, 10),
+                          paymentMethod: 'Bank Transfer',
+                          bankAccountName: 'City Bank PLC',
+                          transactionReference: `EFT-${currentMonthRun.monthYear || currentMonthRun.payrollMonth}-${item.employeeCode || item.employeeId}`,
+                          amountBDT: item.netSalaryBDT ?? item.netPayableBDT ?? 0,
+                          disbursedBy: currentUser?.name || 'Accounts Head',
+                        });
                       });
-                    });
-                }}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
-              >
-                <CheckCircle className="w-4 h-4" />
-                <span>Disburse All Unpaid via Bank EFT</span>
-              </button>
-            )}
+                  }}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  <span>Disburse All Unpaid via Bank EFT</span>
+                </button>
+              )}
           </div>
 
           {/* Payments Pending & Paid Table */}
@@ -2925,16 +3012,23 @@ export const PayrollModule: React.FC = () => {
                         </td>
                         <td className="py-3 px-4 text-right">
                           {it.paymentStatus !== 'Paid' ? (
-                            <button
-                              onClick={() => {
-                                setSelectedRunItemForPayment({ runId: currentMonthRun.id, item: it });
-                                setPayRef(`EFT-${currentMonthRun.monthYear || currentMonthRun.payrollMonth}-${it.employeeCode || it.employeeId}`);
-                                setShowDisburseModal(true);
-                              }}
-                              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-2xs"
-                            >
-                              Disburse
-                            </button>
+                            canDisbursePayroll ? (
+                              <button
+                                onClick={() => {
+                                  setSelectedRunItemForPayment({ runId: currentMonthRun.id, item: it });
+                                  setPayRef(`EFT-${currentMonthRun.monthYear || currentMonthRun.payrollMonth}-${it.employeeCode || it.employeeId}`);
+                                  setShowDisburseModal(true);
+                                }}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-2xs"
+                              >
+                                Disburse
+                              </button>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400">
+                                <Lock className="w-3 h-3" />
+                                Disbursement Restricted
+                              </span>
+                            )
                           ) : (
                             <button
                               onClick={() => setViewingPayslip({ run: currentMonthRun, item: it })}
@@ -3021,8 +3115,17 @@ export const PayrollModule: React.FC = () => {
                     onClick={() => setViewingPayslip({ run: currentMonthRun, item: it })}
                     className="w-full py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition"
                   >
-                    <Printer className="w-3.5 h-3.5" />
-                    <span>View & Print Payslip</span>
+                    {canExportPayroll ? (
+                      <>
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>View & Print Payslip</span>
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>View Payslip</span>
+                      </>
+                    )}
                   </button>
                 </div>
               ))}
@@ -3045,13 +3148,15 @@ export const PayrollModule: React.FC = () => {
                 Audited statements, tax withholding reports, bank transfer advice, and loan schedules.
               </p>
             </div>
-            <button
-              onClick={() => window.print()}
-              className="px-3.5 py-1.5 rounded-xl bg-blue-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export Report</span>
-            </button>
+            {canExportPayroll && (
+              <button
+                onClick={() => window.print()}
+                className="px-3.5 py-1.5 rounded-xl bg-blue-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export Report</span>
+              </button>
+            )}
           </div>
 
           {/* Report Selector Buttons */}
@@ -3177,13 +3282,14 @@ export const PayrollModule: React.FC = () => {
                 </label>
                 <input
                   type="number"
+                  disabled={!canConfigurePayrollRules}
                   value={payrollSettings?.standardWorkingDaysPerMonth ?? 26}
                   onChange={(e) =>
                     updatePayrollSettings({
                       standardWorkingDaysPerMonth: Number(e.target.value) || 26,
                     })
                   }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
 
@@ -3193,13 +3299,14 @@ export const PayrollModule: React.FC = () => {
                 </label>
                 <input
                   type="number"
+                  disabled={!canConfigurePayrollRules}
                   value={payrollSettings?.standardDailyHours ?? 8}
                   onChange={(e) =>
                     updatePayrollSettings({
                       standardDailyHours: Number(e.target.value) || 8,
                     })
                   }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
 
@@ -3210,6 +3317,7 @@ export const PayrollModule: React.FC = () => {
                 <input
                   type="number"
                   step="0.1"
+                  disabled={!canConfigurePayrollRules}
                   value={payrollSettings?.overtimeConfig?.hourlyRateMultiplier ?? 2.0}
                   onChange={(e) =>
                     updatePayrollSettings({
@@ -3219,7 +3327,7 @@ export const PayrollModule: React.FC = () => {
                       },
                     })
                   }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
 
@@ -3234,14 +3342,16 @@ export const PayrollModule: React.FC = () => {
                     For multi-batch work splits, overnight punches, supervisor approvals, and production costing absorption, use the full Overtime module.
                   </p>
                 </div>
-                <button
-                  onClick={() => {
-                    window.dispatchEvent(new CustomEvent('ensec-navigate', { detail: 'overtime-management' }));
-                  }}
-                  className="px-3.5 py-1.5 bg-white text-blue-900 rounded-lg text-xs font-bold hover:bg-blue-50 transition-colors"
-                >
-                  Open Overtime Hub →
-                </button>
+                {canAccessOvertimeHub && (
+                  <button
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent('ensec-navigate', { detail: 'overtime-management' }));
+                    }}
+                    className="px-3.5 py-1.5 bg-white text-blue-900 rounded-lg text-xs font-bold hover:bg-blue-50 transition-colors"
+                  >
+                    Open Overtime Hub →
+                  </button>
+                )}
               </div>
 
               <div>
@@ -3250,6 +3360,7 @@ export const PayrollModule: React.FC = () => {
                 </label>
                 <input
                   type="number"
+                  disabled={!canConfigurePayrollRules}
                   value={payrollSettings?.deductionRules?.pfEmployeeContributionPercent ?? 10}
                   onChange={(e) =>
                     updatePayrollSettings({
@@ -3259,7 +3370,7 @@ export const PayrollModule: React.FC = () => {
                       },
                     })
                   }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
 
@@ -3277,9 +3388,10 @@ export const PayrollModule: React.FC = () => {
                 </label>
                 <input
                   type="time"
+                  disabled={!canConfigurePayrollRules}
                   value={payrollSettings?.shiftStartTime || DEFAULT_SHIFT_START_TIME}
                   onChange={(e) => updatePayrollSettings({ shiftStartTime: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
 
@@ -3289,9 +3401,10 @@ export const PayrollModule: React.FC = () => {
                 </label>
                 <input
                   type="time"
+                  disabled={!canConfigurePayrollRules}
                   value={payrollSettings?.shiftEndTime || DEFAULT_SHIFT_END_TIME}
                   onChange={(e) => updatePayrollSettings({ shiftEndTime: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
 
@@ -3303,11 +3416,12 @@ export const PayrollModule: React.FC = () => {
                   type="number"
                   min={0}
                   max={120}
+                  disabled={!canConfigurePayrollRules}
                   value={payrollSettings?.lateGracePeriodMinutes ?? DEFAULT_GRACE_PERIOD_MINUTES}
                   onChange={(e) =>
                     updatePayrollSettings({ lateGracePeriodMinutes: Math.max(0, Number(e.target.value) || 0) })
                   }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
 
@@ -3319,11 +3433,12 @@ export const PayrollModule: React.FC = () => {
                   type="number"
                   min={15}
                   max={500}
+                  disabled={!canConfigurePayrollRules}
                   value={payrollSettings?.maxGpsAccuracyMeters ?? DEFAULT_MAX_GPS_ACCURACY_METERS}
                   onChange={(e) =>
                     updatePayrollSettings({ maxGpsAccuracyMeters: Math.max(15, Number(e.target.value) || 100) })
                   }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
             </div>
@@ -3336,16 +3451,24 @@ export const PayrollModule: React.FC = () => {
                     Payroll, Shift & GPS settings saved.
                   </span>
                 )}
+                {!canConfigurePayrollRules && (
+                  <span className="text-xs font-semibold text-slate-500 flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5" />
+                    Read-only: Process Monthly Payroll or Approve Salary Sheet permission required to modify rules.
+                  </span>
+                )}
               </div>
-              <button
-                onClick={() => {
-                  setSettingsSavedNotice(true);
-                  setTimeout(() => setSettingsSavedNotice(false), 3000);
-                }}
-                className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs"
-              >
-                Save Payroll Rules
-              </button>
+              {canConfigurePayrollRules && (
+                <button
+                  onClick={() => {
+                    setSettingsSavedNotice(true);
+                    setTimeout(() => setSettingsSavedNotice(false), 3000);
+                  }}
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs"
+                >
+                  Save Payroll Rules
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -3519,19 +3642,27 @@ export const PayrollModule: React.FC = () => {
 
             {/* Modal Controls */}
             <div className="flex items-center justify-end gap-2 pt-3 border-t print:hidden">
+              {!canExportPayroll && (
+                <span className="text-[11px] font-semibold text-slate-500 mr-auto flex items-center gap-1">
+                  <Lock className="w-3 h-3" />
+                  Export Pay Slips permission required to print.
+                </span>
+              )}
               <button
                 onClick={() => setViewingPayslip(null)}
                 className="px-4 py-2 rounded-xl border border-slate-200 font-semibold text-xs"
               >
                 Close
               </button>
-              <button
-                onClick={() => window.print()}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Print Official Payslip</span>
-              </button>
+              {canExportPayroll && (
+                <button
+                  onClick={() => window.print()}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Official Payslip</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -3605,7 +3736,7 @@ export const PayrollModule: React.FC = () => {
       {/* ========================================================================= */}
       {/* MODAL: APPLY LOAN / ADVANCE                                               */}
       {/* ========================================================================= */}
-      {showLoanModal && (
+      {canCreatePayroll && showLoanModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl p-5 space-y-4">
             <div className="flex items-center justify-between border-b pb-3 border-slate-100 dark:border-slate-800">
@@ -3732,7 +3863,7 @@ export const PayrollModule: React.FC = () => {
       {/* ========================================================================= */}
       {/* MODAL: EARLY LOAN SETTLEMENT                                              */}
       {/* ========================================================================= */}
-      {settlingLoan && (
+      {canDisbursePayroll && settlingLoan && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl p-5 space-y-4">
             <div className="flex items-center justify-between border-b pb-3 border-slate-100 dark:border-slate-800">
@@ -3791,7 +3922,7 @@ export const PayrollModule: React.FC = () => {
       {/* ========================================================================= */}
       {/* MODAL: DISBURSE SALARY                                                    */}
       {/* ========================================================================= */}
-      {showDisburseModal && selectedRunItemForPayment && (
+      {canDisbursePayroll && showDisburseModal && selectedRunItemForPayment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl p-5 space-y-4 text-xs">
             <div className="flex items-center justify-between border-b pb-3 border-slate-100 dark:border-slate-800">
@@ -4053,7 +4184,7 @@ export const PayrollModule: React.FC = () => {
       {/* ========================================================================= */}
       {/* MODAL: EDIT / CONFIGURE EMPLOYEE SALARY STRUCTURE                         */}
       {/* ========================================================================= */}
-      {showStructureModal && selectedEmployeeForStructure && (
+      {canEditSalaryStructure && showStructureModal && selectedEmployeeForStructure && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="w-full max-w-2xl max-h-[90vh] flex flex-col bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-xs">
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
@@ -4078,7 +4209,7 @@ export const PayrollModule: React.FC = () => {
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
-                if (isSavingStructure) return;
+                if (isSavingStructure || !canEditSalaryStructure) return;
                 const basic = Math.max(0, Number(strBasic) || 0);
                 const house = Math.max(0, Number(strHouseRent) || 0);
                 const med = Math.max(0, Number(strMedical) || 0);

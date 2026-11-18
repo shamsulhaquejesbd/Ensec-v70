@@ -1447,6 +1447,14 @@ export function hasPageAction(
       }
     }
 
+    if (canonicalPageId === 'payroll' && pageObj && typeof pageObj === 'object') {
+      if (!pageObj.view) return false;
+      if (pageObj[actionKey] !== undefined) {
+        return Boolean(pageObj[actionKey]);
+      }
+      return false;
+    }
+
     if (pageObj && typeof pageObj === 'object') {
       if (pageObj[actionKey] !== undefined) {
         return Boolean(pageObj[actionKey]);
@@ -1556,7 +1564,10 @@ export function canApproveTransaction(
   if (!user) return { allowed: false, reason: 'Not authenticated' };
   if (user.role === 'Super Admin') return { allowed: true };
 
-  const hasApprove = hasPageAction(user, pageId, 'approve') || hasPageAction(user, pageId, 'confirm');
+  const hasApprove =
+    hasPageAction(user, pageId, 'approve') ||
+    hasPageAction(user, pageId, 'confirm') ||
+    (pageId === 'payroll' && hasPageAction(user, pageId, 'approve_payroll'));
   if (!hasApprove) {
     return { allowed: false, reason: 'You do not have approval permissions for this page.' };
   }

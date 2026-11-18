@@ -17094,6 +17094,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Stage 12: Payroll & Salary Automation
   const generateMonthlyPayroll = (monthYear: string) => {
+    if (!hasPageAction(currentUser, 'payroll', 'create_payroll')) {
+      console.warn('Permission denied: create_payroll required to generate monthly payroll.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to generate monthly payroll (${monthYear}) without create_payroll permission`);
+      return;
+    }
     const newRecords: PayrollRecord[] = fieldForceReps.map((rep) => {
       const basic = rep.basicSalaryBDT;
       const houseRent = basic * 0.5;
@@ -17148,6 +17153,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const disbursePayroll = (payrollId: string) => {
+    if (!hasPageAction(currentUser, 'payroll', 'disburse')) {
+      console.warn('Permission denied: disburse required to disburse salary payments.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to disburse payroll (${payrollId}) without disburse permission`);
+      return;
+    }
     setPayrollRecords((prev) =>
       prev.map((p) => {
         if (p.id === payrollId && p.status !== 'Paid') {
@@ -19349,6 +19359,16 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     error?: string;
     sqlFix?: string;
   }> => {
+    if (!hasPageAction(currentUser, 'payroll', 'edit_salary_structure')) {
+      console.warn('Permission denied: edit_salary_structure required to create salary structure.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to create salary structure without edit_salary_structure permission`);
+      return {
+        success: false,
+        id: '',
+        dbSynced: false,
+        error: 'Permission denied: "Edit Salary Structure" permission is required to modify salary structures.',
+      };
+    }
     const empKey = String(structure.employeeId || structure.fieldForceId || '').trim();
     const existing = salaryStructures.find(
       (s) =>
@@ -19413,6 +19433,16 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     error?: string;
     sqlFix?: string;
   }> => {
+    if (!hasPageAction(currentUser, 'payroll', 'edit_salary_structure')) {
+      console.warn('Permission denied: edit_salary_structure required to update salary structure.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to update salary structure (${id}) without edit_salary_structure permission`);
+      return {
+        success: false,
+        id: id || '',
+        dbSynced: false,
+        error: 'Permission denied: "Edit Salary Structure" permission is required to modify salary structures.',
+      };
+    }
     const now = new Date().toISOString().slice(0, 10);
     const existing = salaryStructures.find(
       (s) =>
@@ -19499,6 +19529,14 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     error?: string;
     sqlFix?: string;
   }> => {
+    if (!hasPageAction(currentUser, 'payroll', 'edit_salary_structure')) {
+      console.warn('Permission denied: edit_salary_structure required to sync salary structures.');
+      return {
+        success: false,
+        syncedCount: 0,
+        error: 'Permission denied: "Edit Salary Structure" permission is required to sync salary structures.',
+      };
+    }
     const recordsToSync = salaryStructures.filter((s) => {
       const empId = s.employeeId || s.fieldForceId;
       if (!empId) return false;
@@ -19987,6 +20025,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const markAttendance = (record: Omit<AttendanceRecord, 'id' | 'createdAt' | 'updatedAt'>): string => {
+    if (!hasPageAction(currentUser, 'payroll', 'create_payroll')) {
+      console.warn('Permission denied: create_payroll required to mark or override attendance.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted manual attendance override without create_payroll permission`);
+      return '';
+    }
     const id = `att-${Date.now().toString().slice(-6)}`;
     const now = new Date().toISOString();
     const newRecord: AttendanceRecord = {
@@ -20030,6 +20073,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const bulkMarkAttendance = (records: Omit<AttendanceRecord, 'id' | 'createdAt' | 'updatedAt'>[]) => {
+    if (!hasPageAction(currentUser, 'payroll', 'create_payroll')) {
+      console.warn('Permission denied: create_payroll required to bulk mark attendance.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted bulk attendance marking without create_payroll permission`);
+      return;
+    }
     const now = new Date().toISOString();
     const newItems: AttendanceRecord[] = records.map((r, idx) => ({
       ...r,
@@ -20478,6 +20526,15 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const applyLeave = (leave: Omit<LeaveRecord, 'id' | 'appliedAt' | 'status'>): string => {
+    const canSubmitLeave =
+      hasPageAction(currentUser, 'payroll', 'create_payroll') ||
+      hasPageAction(currentUser, 'mobile-field', 'view') ||
+      hasPageAction(currentUser, 'mobile-field', 'create');
+    if (!canSubmitLeave) {
+      console.warn('Permission denied: create_payroll or mobile-field access required to apply leave.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to apply leave without permission`);
+      return '';
+    }
     const id = `leave-${Date.now().toString().slice(-6)}`;
     const newLeave: LeaveRecord = {
       ...leave,
@@ -20498,6 +20555,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const approveLeave = (id: string, approvedBy: string) => {
+    if (!hasPageAction(currentUser, 'payroll', 'approve_payroll')) {
+      console.warn('Permission denied: approve_payroll required to approve leave.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to approve leave (${id}) without approve_payroll permission`);
+      return;
+    }
     setLeaveRecords((prev) =>
       prev.map((l) => (l.id === id ? { ...l, status: 'Approved', approvedBy, approvedAt: new Date().toISOString() } : l))
     );
@@ -20505,6 +20567,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const rejectLeave = (id: string, reason: string) => {
+    if (!hasPageAction(currentUser, 'payroll', 'approve_payroll')) {
+      console.warn('Permission denied: approve_payroll required to reject leave.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to reject leave (${id}) without approve_payroll permission`);
+      return;
+    }
     setLeaveRecords((prev) =>
       prev.map((l) => (l.id === id ? { ...l, status: 'Rejected', rejectionReason: reason } : l))
     );
@@ -20539,6 +20606,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const applyAdvanceLoan = (
     loanData: Omit<AdvanceLoanRecord, 'id' | 'appliedDate' | 'status' | 'repaidAmountBDT' | 'remainingAmountBDT' | 'schedule'>
   ): string => {
+    if (!hasPageAction(currentUser, 'payroll', 'create_payroll')) {
+      console.warn('Permission denied: create_payroll required to apply for employee advance/loan.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to create advance/loan without create_payroll permission`);
+      return '';
+    }
     const id = `loan-${Date.now().toString().slice(-6)}`;
     const monthlyInstallment = Math.round(loanData.principalAmountBDT / loanData.repaymentTenureMonths);
     const [startYear, startMonth] = loanData.deductionStartMonthYear.split('-').map(Number);
@@ -20579,6 +20651,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const approveAdvanceLoan = (id: string, approvedBy: string) => {
+    if (!hasPageAction(currentUser, 'payroll', 'approve_payroll')) {
+      console.warn('Permission denied: approve_payroll required to approve advance/loan.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to approve loan (${id}) without approve_payroll permission`);
+      return;
+    }
     setAdvanceLoans((prev) =>
       prev.map((l) => (l.id === id ? { ...l, status: 'Approved', approvedBy, approvalDate: new Date().toISOString().slice(0, 10) } : l))
     );
@@ -20619,6 +20696,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const earlySettleAdvanceLoan = (id: string, paymentMethod: string, notes?: string) => {
+    if (!hasPageAction(currentUser, 'payroll', 'disburse')) {
+      console.warn('Permission denied: disburse required to settle employee advance/loan.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted early loan settlement (${id}) without disburse permission`);
+      return;
+    }
     setAdvanceLoans((prev) =>
       prev.map((l) => {
         if (l.id === id) {
@@ -20663,6 +20745,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addOvertimeRecord = (ot: Omit<OvertimeRecord, 'id' | 'status'>): string => {
+    if (!hasPageAction(currentUser, 'payroll', 'create_payroll')) {
+      console.warn('Permission denied: create_payroll required to log payroll overtime.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to log overtime without create_payroll permission`);
+      return '';
+    }
     const id = `ot-${Date.now().toString().slice(-6)}-${Math.random().toString(36).substring(2, 5)}`;
     const newOt: OvertimeRecord = { ...ot, id, status: 'Pending' };
     setOvertimeRecords((prev) => [newOt, ...prev]);
@@ -20691,6 +20778,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const approveOvertimeRecord = (id: string, approvedBy: string) => {
+    if (!hasPageAction(currentUser, 'payroll', 'approve_payroll')) {
+      console.warn('Permission denied: approve_payroll required to approve payroll overtime.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to approve overtime (${id}) without approve_payroll permission`);
+      return;
+    }
     setOvertimeRecords((prev) =>
       prev.map((o) => (o.id === id ? { ...o, status: 'Approved', approvedBy } : o))
     );
@@ -20707,6 +20799,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const rejectOvertimeRecord = (id: string, reason: string) => {
+    if (!hasPageAction(currentUser, 'payroll', 'approve_payroll')) {
+      console.warn('Permission denied: approve_payroll required to reject payroll overtime.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to reject overtime (${id}) without approve_payroll permission`);
+      return;
+    }
     setOvertimeRecords((prev) =>
       prev.map((o) => (o.id === id ? { ...o, status: 'Rejected' } : o))
     );
@@ -21806,6 +21903,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addBonusRecord = (bonus: Omit<BonusRecord, 'id' | 'status'>): string => {
+    if (!hasPageAction(currentUser, 'payroll', 'create_payroll')) {
+      console.warn('Permission denied: create_payroll required to add bonus/incentive.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to add bonus record without create_payroll permission`);
+      return '';
+    }
     const id = `bns-${Date.now().toString().slice(-6)}`;
     const newBonus: BonusRecord = { ...bonus, id, status: 'Pending' };
     setBonusRecords((prev) => [newBonus, ...prev]);
@@ -21814,6 +21916,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const approveBonusRecord = (id: string, approvedBy: string) => {
+    if (!hasPageAction(currentUser, 'payroll', 'approve_payroll')) {
+      console.warn('Permission denied: approve_payroll required to approve bonus/incentive.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to approve bonus (${id}) without approve_payroll permission`);
+      return;
+    }
     setBonusRecords((prev) =>
       prev.map((b) => (b.id === id ? { ...b, status: 'Approved', approvedBy } : b))
     );
@@ -21821,6 +21928,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const generateMonthlySalaryRun = (monthYear: string, department?: string, employeeCategory?: EmployeeCategory): string => {
+    if (!hasPageAction(currentUser, 'payroll', 'create_payroll')) {
+      console.warn('Permission denied: create_payroll required to process monthly payroll run.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to process monthly salary run (${monthYear}) without create_payroll permission`);
+      return '';
+    }
     const [year, month] = monthYear.split('-').map(Number);
     const totalDaysInMonth = new Date(year, month, 0).getDate();
     const workingDaysStandard = payrollSettings.standardWorkingDaysPerMonth || 26;
@@ -22041,6 +22153,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const finalizeMonthlyPayrollRun = (runId: string, finalizedBy: string) => {
+    if (!hasPageAction(currentUser, 'payroll', 'approve_payroll')) {
+      console.warn('Permission denied: approve_payroll required to finalize monthly payroll run.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to finalize payroll run (${runId}) without approve_payroll permission`);
+      return;
+    }
     let targetRun: MonthlyPayrollRun | undefined;
 
     setMonthlyPayrollRuns((prev) =>
@@ -22113,6 +22230,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteMonthlyPayrollRun = (runId: string) => {
+    if (!hasPageAction(currentUser, 'payroll', 'create_payroll')) {
+      console.warn('Permission denied: create_payroll required to delete payroll run.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to delete payroll run (${runId}) without create_payroll permission`);
+      return;
+    }
     setMonthlyPayrollRuns((prev) => prev.filter((r) => r.id !== runId));
     const unlockedIds = overtimeRequests.filter((r) => r.payrollRunId === runId).map((r) => r.id);
     if (unlockedIds.length > 0) {
@@ -22155,6 +22277,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       notes?: string;
     }
   ) => {
+    if (!hasPageAction(currentUser, 'payroll', 'disburse')) {
+      console.warn('Permission denied: disburse required to disburse salary payments.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to disburse salary (${employeeId} / ${runId}) without disburse permission`);
+      return;
+    }
     let paidItem: MonthlySalarySheetItem | undefined;
     let targetMonth = '';
 
@@ -22233,6 +22360,14 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updatePayrollSettings = (newSettings: Partial<PayrollSettings>) => {
+    if (
+      !hasPageAction(currentUser, 'payroll', 'create_payroll') &&
+      !hasPageAction(currentUser, 'payroll', 'approve_payroll')
+    ) {
+      console.warn('Permission denied: create_payroll or approve_payroll required to update payroll settings.');
+      addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to modify payroll settings without permission`);
+      return;
+    }
     setPayrollSettings((prev) => {
       const baseOvertime = prev?.overtimeConfig || DEFAULT_PAYROLL_SETTINGS.overtimeConfig || { hourlyRateMultiplier: 1.5 };
       const baseLeave = prev?.leaveQuotas || DEFAULT_PAYROLL_SETTINGS.leaveQuotas || { annualLeave: 14, casualLeave: 10, sickLeave: 14, maternityLeave: 112 };
