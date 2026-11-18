@@ -12,6 +12,8 @@ import {
   Sparkles,
   Fingerprint
 } from 'lucide-react';
+import { formatTime12Hour } from '../../lib/geofence.ts';
+import { Time12HourInput } from '../common/Time12HourInput.tsx';
 
 interface OvertimeAttendanceModalProps {
   isOpen: boolean;
@@ -160,7 +162,7 @@ export const OvertimeAttendanceModal: React.FC<OvertimeAttendanceModalProps> = (
                 <option value="">-- Standalone Attendance Punch (Unlinked) --</option>
                 {employeeRequests.map((req) => (
                   <option key={req.id} value={req.id}>
-                    {req.requestNumber} • {req.overtimeDate} ({req.expectedStartTime}–{req.expectedEndTime}) [{req.status}]
+                    {req.requestNumber} • {req.overtimeDate} ({formatTime12Hour(req.expectedStartTime)}–{formatTime12Hour(req.expectedEndTime)}) [{req.status}]
                   </option>
                 ))}
               </select>
@@ -219,21 +221,19 @@ export const OvertimeAttendanceModal: React.FC<OvertimeAttendanceModalProps> = (
             <span className="text-xs font-semibold text-slate-600 block mb-2">Standard Factory Shift (Reference)</span>
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
-                <label className="text-slate-500 block mb-1">Standard Check-In</label>
-                <input
-                  type="time"
+                <label className="text-slate-500 block mb-1">Standard Check-In (12-Hr)</label>
+                <Time12HourInput
+                  ariaLabel="Standard Check-In"
                   value={normalCheckIn}
-                  onChange={(e) => setNormalCheckIn(e.target.value)}
-                  className="w-full px-2 py-1.5 border border-slate-200 rounded text-slate-700 bg-white"
+                  onChange={setNormalCheckIn}
                 />
               </div>
               <div>
-                <label className="text-slate-500 block mb-1">Standard Check-Out</label>
-                <input
-                  type="time"
+                <label className="text-slate-500 block mb-1">Standard Check-Out (12-Hr)</label>
+                <Time12HourInput
+                  ariaLabel="Standard Check-Out"
                   value={normalCheckOut}
-                  onChange={(e) => setNormalCheckOut(e.target.value)}
-                  className="w-full px-2 py-1.5 border border-slate-200 rounded text-slate-700 bg-white"
+                  onChange={setNormalCheckOut}
                 />
               </div>
             </div>
@@ -243,27 +243,27 @@ export const OvertimeAttendanceModal: React.FC<OvertimeAttendanceModalProps> = (
           <div className="bg-blue-50/60 p-3.5 rounded-lg border border-blue-200">
             <span className="text-xs font-semibold text-blue-900 block mb-2 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-              Verified Overtime Clock In / Out
+              Verified Overtime Clock In / Out (12-Hr AM/PM)
             </span>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="text-[11px] font-medium text-slate-700 block mb-1">OT Check-In</label>
-                <input
-                  type="time"
-                  value={overtimeCheckIn}
-                  onChange={(e) => setOvertimeCheckIn(e.target.value)}
+                <Time12HourInput
                   required
-                  className="w-full px-2.5 py-1.5 border border-blue-300 rounded text-slate-800 bg-white text-xs font-mono"
+                  ariaLabel="OT Check-In"
+                  value={overtimeCheckIn}
+                  onChange={setOvertimeCheckIn}
+                  className="border-blue-300"
                 />
               </div>
               <div>
                 <label className="text-[11px] font-medium text-slate-700 block mb-1">OT Check-Out</label>
-                <input
-                  type="time"
-                  value={overtimeCheckOut}
-                  onChange={(e) => setOvertimeCheckOut(e.target.value)}
+                <Time12HourInput
                   required
-                  className="w-full px-2.5 py-1.5 border border-blue-300 rounded text-slate-800 bg-white text-xs font-mono"
+                  ariaLabel="OT Check-Out"
+                  value={overtimeCheckOut}
+                  onChange={setOvertimeCheckOut}
+                  className="border-blue-300"
                 />
               </div>
               <div>

@@ -274,7 +274,7 @@ export const OvertimePayrollCostingTab: React.FC = () => {
               </div>
               <div className="text-right text-slate-400 text-[11px] flex items-center gap-3">
                 <span className="font-medium text-slate-600">{log.actorName}</span>
-                <span>{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span>{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
               </div>
             </div>
           ))

@@ -300,6 +300,34 @@ export function formatMinutesAsHHmm(totalMinutes: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+/**
+ * Formats a time string ("HH:mm", "HH:mm:ss", or "hh:mm AM/PM") into 12-hour AM/PM format (e.g. "06:30 PM").
+ * Returns empty string if input is empty or invalid.
+ */
+export function formatTime12Hour(timeStr?: string | null): string {
+  if (!timeStr || typeof timeStr !== 'string') return '';
+  const trimmed = timeStr.trim();
+  if (!trimmed || trimmed === '—' || trimmed === '--:--') return '';
+  const mins = parseTimeToMinutes(trimmed);
+  if (mins === null) return trimmed;
+  const clamped = ((mins % 1440) + 1440) % 1440;
+  const h24 = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  const period = h24 >= 12 ? 'PM' : 'AM';
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+/**
+ * Converts a time string ("HH:mm", "HH:mm:ss", or "hh:mm AM/PM") to canonical 24-hour "HH:mm".
+ */
+export function toTime24Hour(timeStr?: string | null): string {
+  if (!timeStr || typeof timeStr !== 'string') return '';
+  const mins = parseTimeToMinutes(timeStr);
+  if (mins === null) return '';
+  return formatMinutesAsHHmm(mins);
+}
+
 export function formatLateDuration(lateMinutes: number): string {
   if (!lateMinutes || lateMinutes <= 0) return 'On Time';
   const hrs = Math.floor(lateMinutes / 60);

@@ -24,6 +24,7 @@ import {
   Info,
 } from 'lucide-react';
 import { OvertimeRequest } from '../../types/overtime.ts';
+import { formatTime12Hour } from '../../lib/geofence.ts';
 
 interface OvertimeApprovalModalProps {
   request: OvertimeRequest;
@@ -204,8 +205,8 @@ export const OvertimeApprovalModal: React.FC<OvertimeApprovalModalProps> = ({
               </div>
               <div>
                 <span className="text-slate-400 block text-[10px]">Time Range:</span>
-                <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                  {request.expectedStartTime} – {request.expectedEndTime}
+                <span className="font-mono font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                  {formatTime12Hour(request.expectedStartTime) || '—'} – {formatTime12Hour(request.expectedEndTime) || '—'}
                 </span>
               </div>
               <div>

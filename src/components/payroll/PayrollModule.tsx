@@ -70,6 +70,7 @@ import {
   DEFAULT_SHIFT_START_TIME,
   calculateShiftAttendanceStatus,
   formatLateDuration,
+  formatTime12Hour,
   parseTimeToMinutes,
 } from '../../lib/geofence.ts';
 import {
@@ -95,6 +96,7 @@ import {
 } from '../../types/payroll.ts';
 import { FieldForceRep } from '../../types/erp.ts';
 import { EmployeeAttendanceCardModal } from './EmployeeAttendanceCardModal.tsx';
+import { Time12HourInput } from '../common/Time12HourInput.tsx';
 
 type PayrollTab =
   | 'dashboard'
@@ -658,11 +660,11 @@ export const PayrollModule: React.FC = () => {
         Department: meta.department,
         'Assigned Office': meta.assignedOffice,
         'Attendance Date': rec.date,
-        'Check-In Time': meta.checkIn || '—',
+        'Check-In Time': formatTime12Hour(meta.checkIn) || '—',
         'Check-In Location': meta.checkInLoc,
         'Check-In Distance (Meters)':
           typeof rec.checkInDistanceMeters === 'number' ? Math.round(rec.checkInDistanceMeters * 10) / 10 : '—',
-        'Check-Out Time': meta.checkOut || '—',
+        'Check-Out Time': formatTime12Hour(meta.checkOut) || '—',
         'Check-Out Location': meta.checkOutLoc,
         'Check-Out Distance (Meters)':
           typeof rec.checkOutDistanceMeters === 'number' ? Math.round(rec.checkOutDistanceMeters * 10) / 10 : '—',
@@ -692,7 +694,7 @@ export const PayrollModule: React.FC = () => {
 
     const rejectedRows = filteredRejectedAttempts.map((att) => ({
       Date: att.attendanceDate,
-      Time: att.attemptTime,
+      Time: formatTime12Hour(att.attemptTime) || att.attemptTime,
       'Employee ID': att.employeeCode || att.employeeId,
       'Employee Name': att.employeeName,
       Department: att.department || '—',
@@ -2450,14 +2452,15 @@ export const PayrollModule: React.FC = () => {
                                 {todayRec ? status : 'Unmarked'}
                               </span>
                             </td>
-                            <td className="py-3 px-4 font-mono tabular-nums">
+                            <td className="py-3 px-4 font-mono tabular-nums whitespace-nowrap">
                               {canCreatePayroll ? (
-                                <input
-                                  type="time"
+                                <Time12HourInput
+                                  compact
+                                  allowClear
+                                  ariaLabel={`Check In time for ${emp.name}`}
                                   value={inValue}
                                   disabled={isSavingRow}
-                                  onChange={(e) => {
-                                    const nextIn = e.target.value;
+                                  onChange={(nextIn) => {
                                     setDailyGridDrafts((prev) => ({
                                       ...prev,
                                       [rowKey]: {
@@ -2466,10 +2469,9 @@ export const PayrollModule: React.FC = () => {
                                       },
                                     }));
                                   }}
-                                  className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-mono text-slate-900 dark:text-slate-100"
                                 />
                               ) : (
-                                <div>{savedIn || '—'}</div>
+                                <div>{formatTime12Hour(savedIn) || '—'}</div>
                               )}
                               {typeof todayRec?.checkInDistanceMeters === 'number' && (
                                 <span className="block text-[10px] text-emerald-600 mt-0.5">
@@ -2477,14 +2479,15 @@ export const PayrollModule: React.FC = () => {
                                 </span>
                               )}
                             </td>
-                            <td className="py-3 px-4 font-mono tabular-nums">
+                            <td className="py-3 px-4 font-mono tabular-nums whitespace-nowrap">
                               {canCreatePayroll ? (
-                                <input
-                                  type="time"
+                                <Time12HourInput
+                                  compact
+                                  allowClear
+                                  ariaLabel={`Check Out time for ${emp.name}`}
                                   value={outValue}
                                   disabled={isSavingRow}
-                                  onChange={(e) => {
-                                    const nextOut = e.target.value;
+                                  onChange={(nextOut) => {
                                     setDailyGridDrafts((prev) => ({
                                       ...prev,
                                       [rowKey]: {
@@ -2493,10 +2496,9 @@ export const PayrollModule: React.FC = () => {
                                       },
                                     }));
                                   }}
-                                  className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-mono text-slate-900 dark:text-slate-100"
                                 />
                               ) : (
-                                <div>{savedOut || '—'}</div>
+                                <div>{formatTime12Hour(savedOut) || '—'}</div>
                               )}
                               {typeof todayRec?.checkOutDistanceMeters === 'number' && (
                                 <span className="block text-[10px] text-emerald-600 mt-0.5">
@@ -2641,7 +2643,7 @@ export const PayrollModule: React.FC = () => {
                       filteredRejectedAttempts.map((att) => (
                         <tr key={att.id} className="hover:bg-rose-50/40 dark:hover:bg-rose-950/10">
                           <td className="py-2.5 px-3 font-mono tabular-nums">
-                            {att.attendanceDate} {att.attemptTime}
+                            {att.attendanceDate} {formatTime12Hour(att.attemptTime) || att.attemptTime}
                           </td>
                           <td className="py-2.5 px-3 font-mono font-bold text-blue-600">
                             {att.employeeCode || att.employeeId}
@@ -4146,41 +4148,41 @@ export const PayrollModule: React.FC = () => {
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Default Shift Start Time
+                  Default Shift Start Time (12-Hr AM/PM)
                 </label>
-                <input
-                  type="time"
+                <Time12HourInput
+                  ariaLabel="Default Shift Start Time"
                   disabled={!canConfigurePayrollRules || isSavingPayrollSettings}
                   value={settingsForm.shiftStartTime}
-                  onChange={(e) => {
+                  onChange={(nextVal) => {
                     setHasUnsavedSettingsChanges(true);
                     setSettingsFeedback(null);
                     setSettingsForm((prev) => ({
                       ...prev,
-                      shiftStartTime: e.target.value,
+                      shiftStartTime: nextVal || DEFAULT_SHIFT_START_TIME,
                     }));
                   }}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="bg-slate-50 dark:bg-slate-800 py-2"
                 />
               </div>
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Default Shift End Time
+                  Default Shift End Time (12-Hr AM/PM)
                 </label>
-                <input
-                  type="time"
+                <Time12HourInput
+                  ariaLabel="Default Shift End Time"
                   disabled={!canConfigurePayrollRules || isSavingPayrollSettings}
                   value={settingsForm.shiftEndTime}
-                  onChange={(e) => {
+                  onChange={(nextVal) => {
                     setHasUnsavedSettingsChanges(true);
                     setSettingsFeedback(null);
                     setSettingsForm((prev) => ({
                       ...prev,
-                      shiftEndTime: e.target.value,
+                      shiftEndTime: nextVal || DEFAULT_SHIFT_END_TIME,
                     }));
                   }}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="bg-slate-50 dark:bg-slate-800 py-2"
                 />
               </div>
 
@@ -4980,13 +4982,13 @@ export const PayrollModule: React.FC = () => {
                               return (
                                 <tr key={rec.id}>
                                   <td className="py-2 px-3 font-mono tabular-nums">{rec.date}</td>
-                                  <td className="py-2 px-3 font-mono tabular-nums">{meta.checkIn || '—'}</td>
+                                  <td className="py-2 px-3 font-mono tabular-nums">{formatTime12Hour(meta.checkIn) || '—'}</td>
                                   <td className="py-2 px-3 font-mono tabular-nums">
                                     {typeof rec.checkInDistanceMeters === 'number'
                                       ? `${Math.round(rec.checkInDistanceMeters)}m`
                                       : '—'}
                                   </td>
-                                  <td className="py-2 px-3 font-mono tabular-nums">{meta.checkOut || '—'}</td>
+                                  <td className="py-2 px-3 font-mono tabular-nums">{formatTime12Hour(meta.checkOut) || '—'}</td>
                                   <td className="py-2 px-3 font-mono tabular-nums">
                                     {typeof rec.checkOutDistanceMeters === 'number'
                                       ? `${Math.round(rec.checkOutDistanceMeters)}m`
@@ -5027,7 +5029,7 @@ export const PayrollModule: React.FC = () => {
                               {empAllRejected.map((att) => (
                                 <tr key={att.id}>
                                   <td className="py-2 px-3 font-mono">
-                                    {att.attendanceDate} {att.attemptTime}
+                                    {att.attendanceDate} {formatTime12Hour(att.attemptTime) || att.attemptTime}
                                   </td>
                                   <td className="py-2 px-3 font-bold">{att.attemptType}</td>
                                   <td className="py-2 px-3 font-mono text-rose-600">

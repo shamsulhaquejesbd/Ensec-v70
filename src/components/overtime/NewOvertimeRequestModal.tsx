@@ -31,6 +31,7 @@ import {
   calculateEmployeeIndividualOvertime,
   EmployeeOvertimePolicy,
 } from '../../types/overtime.ts';
+import { Time12HourInput } from '../common/Time12HourInput.tsx';
 
 interface NewOvertimeRequestModalProps {
   onClose: () => void;
@@ -578,24 +579,24 @@ export const NewOvertimeRequestModal: React.FC<NewOvertimeRequestModalProps> = (
           {/* Time & Hours Configuration */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
             <div className="space-y-1">
-              <label className="font-bold text-slate-700 dark:text-slate-300">Start Time *</label>
-              <input
-                type="time"
-                value={expectedStartTime}
-                onChange={(e) => setExpectedStartTime(e.target.value)}
+              <label className="font-bold text-slate-700 dark:text-slate-300">Start Time (12-Hr) *</label>
+              <Time12HourInput
                 required
-                className="w-full py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold"
+                ariaLabel="Overtime Start Time"
+                value={expectedStartTime}
+                onChange={setExpectedStartTime}
+                className="py-2 bg-slate-50 dark:bg-slate-800"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="font-bold text-slate-700 dark:text-slate-300">End Time *</label>
-              <input
-                type="time"
-                value={expectedEndTime}
-                onChange={(e) => setExpectedEndTime(e.target.value)}
+              <label className="font-bold text-slate-700 dark:text-slate-300">End Time (12-Hr) *</label>
+              <Time12HourInput
                 required
-                className="w-full py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold"
+                ariaLabel="Overtime End Time"
+                value={expectedEndTime}
+                onChange={setExpectedEndTime}
+                className="py-2 bg-slate-50 dark:bg-slate-800"
               />
             </div>
 

@@ -16,6 +16,7 @@ import {
   UserCheck,
   Plus
 } from 'lucide-react';
+import { formatTime12Hour } from '../../lib/geofence.ts';
 
 interface OvertimeAttendanceTabProps {
   onRecordNewAttendance: () => void;
@@ -224,15 +225,15 @@ export const OvertimeAttendanceTab: React.FC<OvertimeAttendanceTabProps> = ({ on
                       </td>
 
                       <td className="py-3.5 px-3">
-                        <div className="text-xs text-slate-600 font-mono">
-                          {att.normalCheckInTime} - {att.normalCheckOutTime}
+                        <div className="text-xs text-slate-600 font-mono whitespace-nowrap">
+                          {formatTime12Hour(att.normalCheckInTime) || '—'} - {formatTime12Hour(att.normalCheckOutTime) || '—'}
                         </div>
                         <span className="text-[10px] text-slate-400">Standard 8h Shift</span>
                       </td>
 
                       <td className="py-3.5 px-3">
-                        <div className="text-xs font-mono font-semibold text-blue-700 bg-blue-50/70 border border-blue-100 px-2 py-0.5 rounded inline-block">
-                          {att.overtimeCheckInTime} → {att.overtimeCheckOutTime}
+                        <div className="text-xs font-mono font-semibold text-blue-700 bg-blue-50/70 border border-blue-100 px-2 py-0.5 rounded inline-block whitespace-nowrap">
+                          {formatTime12Hour(att.overtimeCheckInTime) || '—'} → {formatTime12Hour(att.overtimeCheckOutTime) || '—'}
                         </div>
                       </td>
 

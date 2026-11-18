@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext.tsx';
 import { getSupabase } from '../../lib/supabase.ts';
-import { parseTimeToMinutes } from '../../lib/geofence.ts';
+import { formatTime12Hour, parseTimeToMinutes } from '../../lib/geofence.ts';
 import type { FieldForceRep } from '../../types/erp.ts';
 import type { AttendanceRecord, AttendanceStatus } from '../../types/payroll.ts';
 import type { OvertimeAttendance, OvertimeRequest } from '../../types/overtime.ts';
@@ -961,7 +961,11 @@ export const EmployeeAttendanceCardModal: React.FC<EmployeeAttendanceCardModalPr
                           <span className="text-[10px] font-normal text-slate-500">
                             (ID #{activeEmployee.id}
                             {(activeEmployee.shiftStartTime || payrollSettings?.shiftStartTime) &&
-                              ` • Shift ${activeEmployee.shiftStartTime || payrollSettings?.shiftStartTime}–${activeEmployee.shiftEndTime || payrollSettings?.shiftEndTime || '17:00'}`}
+                              ` • Shift ${formatTime12Hour(
+                                activeEmployee.shiftStartTime || payrollSettings?.shiftStartTime
+                              )}–${formatTime12Hour(
+                                activeEmployee.shiftEndTime || payrollSettings?.shiftEndTime || '17:00'
+                              )}`}
                             )
                           </span>
                         </span>
@@ -1069,22 +1073,22 @@ export const EmployeeAttendanceCardModal: React.FC<EmployeeAttendanceCardModalPr
                             {r.day}{' '}
                             <span className="text-[8px] font-normal text-slate-500">{r.weekdayShort}</span>
                           </td>
-                          <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono">
-                            {r.checkInTime || ''}
+                          <td className="border-b border-r border-slate-400 px-0.5 py-0.5 text-center font-mono text-[8.5px] print:text-[8px] whitespace-nowrap">
+                            {formatTime12Hour(r.checkInTime) || ''}
                           </td>
-                          <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono">
-                            {r.checkOutTime || ''}
+                          <td className="border-b border-r border-slate-400 px-0.5 py-0.5 text-center font-mono text-[8.5px] print:text-[8px] whitespace-nowrap">
+                            {formatTime12Hour(r.checkOutTime) || ''}
                           </td>
                           <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono font-semibold">
                             {r.regularWorkingHours !== null && r.regularWorkingHours > 0
                               ? r.regularWorkingHours.toFixed(2)
                               : ''}
                           </td>
-                          <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono">
-                            {r.otExpectedStart || ''}
+                          <td className="border-b border-r border-slate-400 px-0.5 py-0.5 text-center font-mono text-[8.5px] print:text-[8px] whitespace-nowrap">
+                            {formatTime12Hour(r.otExpectedStart) || ''}
                           </td>
-                          <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono">
-                            {r.otExpectedEnd || ''}
+                          <td className="border-b border-r border-slate-400 px-0.5 py-0.5 text-center font-mono text-[8.5px] print:text-[8px] whitespace-nowrap">
+                            {formatTime12Hour(r.otExpectedEnd) || ''}
                           </td>
                           <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono font-semibold">
                             {r.otHours !== null && r.otHours > 0 ? r.otHours.toFixed(2) : ''}
@@ -1151,22 +1155,22 @@ export const EmployeeAttendanceCardModal: React.FC<EmployeeAttendanceCardModalPr
                             {r.day}{' '}
                             <span className="text-[8px] font-normal text-slate-500">{r.weekdayShort}</span>
                           </td>
-                          <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono">
-                            {r.checkInTime || ''}
+                          <td className="border-b border-r border-slate-400 px-0.5 py-0.5 text-center font-mono text-[8.5px] print:text-[8px] whitespace-nowrap">
+                            {formatTime12Hour(r.checkInTime) || ''}
                           </td>
-                          <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono">
-                            {r.checkOutTime || ''}
+                          <td className="border-b border-r border-slate-400 px-0.5 py-0.5 text-center font-mono text-[8.5px] print:text-[8px] whitespace-nowrap">
+                            {formatTime12Hour(r.checkOutTime) || ''}
                           </td>
                           <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono font-semibold">
                             {r.regularWorkingHours !== null && r.regularWorkingHours > 0
                               ? r.regularWorkingHours.toFixed(2)
                               : ''}
                           </td>
-                          <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono">
-                            {r.otExpectedStart || ''}
+                          <td className="border-b border-r border-slate-400 px-0.5 py-0.5 text-center font-mono text-[8.5px] print:text-[8px] whitespace-nowrap">
+                            {formatTime12Hour(r.otExpectedStart) || ''}
                           </td>
-                          <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono">
-                            {r.otExpectedEnd || ''}
+                          <td className="border-b border-r border-slate-400 px-0.5 py-0.5 text-center font-mono text-[8.5px] print:text-[8px] whitespace-nowrap">
+                            {formatTime12Hour(r.otExpectedEnd) || ''}
                           </td>
                           <td className="border-b border-r border-slate-400 px-1 py-0.5 text-center font-mono font-semibold">
                             {r.otHours !== null && r.otHours > 0 ? r.otHours.toFixed(2) : ''}
@@ -1285,11 +1289,11 @@ export const EmployeeAttendanceCardModal: React.FC<EmployeeAttendanceCardModalPr
                             <td className="border border-slate-300 px-1.5 py-0.5 text-center font-mono">
                               {req.overtimeDate}
                             </td>
-                            <td className="border border-slate-300 px-1.5 py-0.5 text-center font-mono">
-                              {normalizeTimeDisplay(req.expectedStartTime) || '—'}
+                            <td className="border border-slate-300 px-1.5 py-0.5 text-center font-mono whitespace-nowrap">
+                              {formatTime12Hour(req.expectedStartTime) || '—'}
                             </td>
-                            <td className="border border-slate-300 px-1.5 py-0.5 text-center font-mono">
-                              {normalizeTimeDisplay(req.expectedEndTime) || '—'}
+                            <td className="border border-slate-300 px-1.5 py-0.5 text-center font-mono whitespace-nowrap">
+                              {formatTime12Hour(req.expectedEndTime) || '—'}
                             </td>
                             <td className="border border-slate-300 px-1.5 py-0.5 text-right font-mono font-bold">
                               {(Number(req.expectedHours) || 0).toFixed(2)}h

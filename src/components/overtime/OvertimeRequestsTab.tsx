@@ -33,6 +33,7 @@ import {
   X,
 } from 'lucide-react';
 import { OvertimeRequest, OvertimeStatus } from '../../types/overtime.ts';
+import { formatTime12Hour } from '../../lib/geofence.ts';
 
 interface OvertimeRequestsTabProps {
   onOpenNewRequest: () => void;
@@ -347,8 +348,8 @@ export const OvertimeRequestsTab: React.FC<OvertimeRequestsTabProps> = ({
                     </td>
 
                     <td className="p-3 text-center">
-                      <span className="font-mono font-bold text-slate-800 dark:text-slate-200 block">
-                        {req.expectedStartTime} – {req.expectedEndTime}
+                      <span className="font-mono font-bold text-slate-800 dark:text-slate-200 block whitespace-nowrap">
+                        {formatTime12Hour(req.expectedStartTime) || '—'} – {formatTime12Hour(req.expectedEndTime) || '—'}
                       </span>
                       <span className="text-[10px] text-slate-400">
                         Requested by {req.requestedBy.split(' ')[0]}
