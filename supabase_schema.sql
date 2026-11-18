@@ -3240,8 +3240,19 @@ CREATE TABLE IF NOT EXISTS public.payroll_settings (
   leave_quotas JSONB DEFAULT '{"annualLeave": 14, "casualLeave": 10, "sickLeave": 14, "maternityLeave": 112}'::jsonb,
   deduction_rules JSONB DEFAULT '{"absentDayDeductionMultiplier": 1.0, "lateDeductionRules": "3 late marks equal 1 day deduction", "latePenaltyEnabled": true, "incomeTaxEnabled": true, "providentFundEnabled": true, "pfEmployeeContributionPercent": 10, "pfEmployerContributionPercent": 10}'::jsonb,
   salary_components JSONB DEFAULT '{"houseRentPercent": 50, "medicalAllowancePercent": 10}'::jsonb,
+  shift_start_time TEXT DEFAULT '09:00',
+  shift_end_time TEXT DEFAULT '18:00',
+  late_grace_period_minutes INT DEFAULT 15,
+  max_gps_accuracy_meters INT DEFAULT 100,
+  updated_by TEXT,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE public.payroll_settings ADD COLUMN IF NOT EXISTS shift_start_time TEXT DEFAULT '09:00';
+ALTER TABLE public.payroll_settings ADD COLUMN IF NOT EXISTS shift_end_time TEXT DEFAULT '18:00';
+ALTER TABLE public.payroll_settings ADD COLUMN IF NOT EXISTS late_grace_period_minutes INT DEFAULT 15;
+ALTER TABLE public.payroll_settings ADD COLUMN IF NOT EXISTS max_gps_accuracy_meters INT DEFAULT 100;
+ALTER TABLE public.payroll_settings ADD COLUMN IF NOT EXISTS updated_by TEXT;
 
 -- Payroll Indexes
 CREATE INDEX IF NOT EXISTS idx_emp_salary_str_empid ON public.employee_salary_structures(employee_id);
@@ -3258,6 +3269,10 @@ CREATE INDEX IF NOT EXISTS idx_sal_pay_run ON public.salary_payments(payroll_run
 ALTER TABLE public.employee_salary_structures ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow public all employee_salary_structures" ON public.employee_salary_structures;
 CREATE POLICY "Allow public all employee_salary_structures" ON public.employee_salary_structures FOR ALL USING (true) WITH CHECK (true);
+
+ALTER TABLE public.payroll_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow public all payroll_settings" ON public.payroll_settings;
+CREATE POLICY "Allow public all payroll_settings" ON public.payroll_settings FOR ALL USING (true) WITH CHECK (true);
 
 -- Grants
 GRANT ALL ON public.employee_salary_structures TO postgres, anon, authenticated, service_role;

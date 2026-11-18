@@ -89,6 +89,7 @@ import {
   SalaryPaymentRecord,
   PayrollSettings,
   SALARY_STRUCTURES_TABLE_SQL,
+  PAYROLL_SETTINGS_TABLE_SQL,
 } from '../../types/payroll.ts';
 import { FieldForceRep } from '../../types/erp.ts';
 
@@ -146,6 +147,8 @@ export const PayrollModule: React.FC = () => {
     finalizeMonthlyPayrollRun,
     deleteMonthlyPayrollRun,
     recordSalaryPayment,
+    payrollSettingsDbStatus,
+    syncPayrollSettingsToSupabase,
     updatePayrollSettings,
     hasPageAccess,
     hasPageAction,
@@ -191,7 +194,49 @@ export const PayrollModule: React.FC = () => {
   const [attOfficeFilter, setAttOfficeFilter] = useState<string>('All');
   const [attStatusFilter, setAttStatusFilter] = useState<string>('All');
   const [historyEmployee, setHistoryEmployee] = useState<FieldForceRep | null>(null);
-  const [settingsSavedNotice, setSettingsSavedNotice] = useState<boolean>(false);
+  const [hasUnsavedSettingsChanges, setHasUnsavedSettingsChanges] = useState<boolean>(false);
+  const [isSavingPayrollSettings, setIsSavingPayrollSettings] = useState<boolean>(false);
+  const [isSyncingPayrollSettings, setIsSyncingPayrollSettings] = useState<boolean>(false);
+  const [copiedSettingsSql, setCopiedSettingsSql] = useState<boolean>(false);
+  const [settingsFeedback, setSettingsFeedback] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+    sqlFix?: string;
+  } | null>(null);
+  const [settingsForm, setSettingsForm] = useState({
+    standardWorkingDaysPerMonth: String(payrollSettings?.standardWorkingDaysPerMonth ?? 26),
+    standardDailyHours: String(payrollSettings?.standardDailyHours ?? 8),
+    pfEmployeeContributionPercent: String(
+      payrollSettings?.deductionRules?.pfEmployeeContributionPercent ?? 10
+    ),
+    shiftStartTime: payrollSettings?.shiftStartTime || DEFAULT_SHIFT_START_TIME,
+    shiftEndTime: payrollSettings?.shiftEndTime || DEFAULT_SHIFT_END_TIME,
+    lateGracePeriodMinutes: String(
+      payrollSettings?.lateGracePeriodMinutes ?? DEFAULT_GRACE_PERIOD_MINUTES
+    ),
+    maxGpsAccuracyMeters: String(
+      payrollSettings?.maxGpsAccuracyMeters ?? DEFAULT_MAX_GPS_ACCURACY_METERS
+    ),
+  });
+
+  useEffect(() => {
+    if (hasUnsavedSettingsChanges) return;
+    setSettingsForm({
+      standardWorkingDaysPerMonth: String(payrollSettings?.standardWorkingDaysPerMonth ?? 26),
+      standardDailyHours: String(payrollSettings?.standardDailyHours ?? 8),
+      pfEmployeeContributionPercent: String(
+        payrollSettings?.deductionRules?.pfEmployeeContributionPercent ?? 10
+      ),
+      shiftStartTime: payrollSettings?.shiftStartTime || DEFAULT_SHIFT_START_TIME,
+      shiftEndTime: payrollSettings?.shiftEndTime || DEFAULT_SHIFT_END_TIME,
+      lateGracePeriodMinutes: String(
+        payrollSettings?.lateGracePeriodMinutes ?? DEFAULT_GRACE_PERIOD_MINUTES
+      ),
+      maxGpsAccuracyMeters: String(
+        payrollSettings?.maxGpsAccuracyMeters ?? DEFAULT_MAX_GPS_ACCURACY_METERS
+      ),
+    });
+  }, [payrollSettings, hasUnsavedSettingsChanges]);
 
   // Modals state
   const [showStructureModal, setShowStructureModal] = useState<boolean>(false);
@@ -3369,10 +3414,172 @@ export const PayrollModule: React.FC = () => {
       {activeTab === 'settings' && (
         <div className="space-y-5 max-w-4xl">
           <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs space-y-4">
-            <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Settings className="w-5 h-5 text-blue-600" />
-              <span>Corporate Payroll Configuration & Statutory Rules</span>
-            </h2>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Settings className="w-5 h-5 text-blue-600" />
+                  <span>Corporate Payroll Configuration & Statutory Rules</span>
+                </h2>
+                {payrollSettings?.updatedAt && (
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Last updated {new Date(payrollSettings.updatedAt).toLocaleString()}
+                    {payrollSettings.updatedBy ? ` by ${payrollSettings.updatedBy}` : ''}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {payrollSettingsDbStatus.synced ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/70 text-[10px] font-bold">
+                    <Database className="w-3 h-3" />
+                    Supabase Synced
+                  </span>
+                ) : payrollSettingsDbStatus.status !== 'unknown' ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/70 text-[10px] font-bold">
+                    <Database className="w-3 h-3" />
+                    {payrollSettingsDbStatus.status === 'rls_blocked'
+                      ? 'Supabase RLS Blocked'
+                      : payrollSettingsDbStatus.status === 'table_missing'
+                      ? 'Supabase Table Missing'
+                      : 'Supabase Sync Needed'}
+                  </span>
+                ) : null}
+
+                {canConfigurePayrollRules && (
+                  <button
+                    type="button"
+                    disabled={isSyncingPayrollSettings}
+                    onClick={async () => {
+                      setIsSyncingPayrollSettings(true);
+                      setSettingsFeedback(null);
+                      const res = await syncPayrollSettingsToSupabase();
+                      setIsSyncingPayrollSettings(false);
+                      if (res.success && res.dbSynced) {
+                        setSettingsFeedback({
+                          type: 'success',
+                          message: 'Corporate payroll rules verified & synced with Supabase.',
+                        });
+                      } else {
+                        setSettingsFeedback({
+                          type: 'warning',
+                          message:
+                            res.error ||
+                            'Could not sync payroll rules to Supabase. Run the SQL policy below in Supabase SQL Editor.',
+                          sqlFix: res.sqlFix || PAYROLL_SETTINGS_TABLE_SQL,
+                        });
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isSyncingPayrollSettings ? 'animate-spin' : ''}`} />
+                    <span>{isSyncingPayrollSettings ? 'Syncing...' : 'Sync to Supabase'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {settingsFeedback && (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-start justify-between gap-3 ${
+                  settingsFeedback.type === 'success'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                    : settingsFeedback.type === 'warning'
+                    ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200'
+                    : 'bg-rose-50 dark:bg-rose-950/50 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  {settingsFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                  )}
+                  <span className="font-medium leading-relaxed">{settingsFeedback.message}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSettingsFeedback(null)}
+                  className="p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/10"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {canConfigurePayrollRules &&
+              !payrollSettingsDbStatus.synced &&
+              (payrollSettingsDbStatus.status === 'rls_blocked' ||
+                payrollSettingsDbStatus.status === 'table_missing' ||
+                payrollSettingsDbStatus.status === 'error' ||
+                Boolean(settingsFeedback?.sqlFix)) && (
+                <div className="p-4 rounded-2xl bg-amber-50/90 dark:bg-amber-950/35 border border-amber-200 dark:border-amber-800/80 space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <Database className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                    <div>
+                      <div className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                        Supabase Permission / Table Setup Needed for Payroll Settings
+                      </div>
+                      <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5 leading-relaxed">
+                        {payrollSettingsDbStatus.error ||
+                          settingsFeedback?.message ||
+                          'Supabase blocked writing to public.payroll_settings.'}{' '}
+                        Run the SQL script below once in Supabase SQL Editor, then click{' '}
+                        <b>Sync to Supabase</b>.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                        One-Time Supabase SQL Fix (RLS Policy + Columns)
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(
+                                payrollSettingsDbStatus.sqlFix ||
+                                  settingsFeedback?.sqlFix ||
+                                  PAYROLL_SETTINGS_TABLE_SQL
+                              );
+                              setCopiedSettingsSql(true);
+                              setTimeout(() => setCopiedSettingsSql(false), 2500);
+                            } catch {}
+                          }}
+                          className="px-2.5 py-1 rounded-md bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-[10px] font-bold text-amber-900 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-slate-800 flex items-center gap-1"
+                        >
+                          {copiedSettingsSql ? (
+                            <>
+                              <Check className="w-3 h-3 text-emerald-600" />
+                              <span>Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>Copy SQL</span>
+                            </>
+                          )}
+                        </button>
+                        <a
+                          href={supabaseSqlEditorUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2.5 py-1 rounded-md bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-[10px] font-bold text-amber-900 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-slate-800 flex items-center gap-1"
+                        >
+                          <span>Open SQL Editor</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    </div>
+                    <pre className="p-3 rounded-lg bg-slate-900 text-slate-100 text-[10px] font-mono overflow-x-auto max-h-40 leading-relaxed border border-slate-800">
+                      {payrollSettingsDbStatus.sqlFix ||
+                        settingsFeedback?.sqlFix ||
+                        PAYROLL_SETTINGS_TABLE_SQL}
+                    </pre>
+                  </div>
+                </div>
+              )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs pt-2">
               <div>
@@ -3381,13 +3588,18 @@ export const PayrollModule: React.FC = () => {
                 </label>
                 <input
                   type="number"
-                  disabled={!canConfigurePayrollRules}
-                  value={payrollSettings?.standardWorkingDaysPerMonth ?? 26}
-                  onChange={(e) =>
-                    updatePayrollSettings({
-                      standardWorkingDaysPerMonth: Number(e.target.value) || 26,
-                    })
-                  }
+                  min={1}
+                  max={31}
+                  disabled={!canConfigurePayrollRules || isSavingPayrollSettings}
+                  value={settingsForm.standardWorkingDaysPerMonth}
+                  onChange={(e) => {
+                    setHasUnsavedSettingsChanges(true);
+                    setSettingsFeedback(null);
+                    setSettingsForm((prev) => ({
+                      ...prev,
+                      standardWorkingDaysPerMonth: e.target.value,
+                    }));
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
@@ -3398,13 +3610,18 @@ export const PayrollModule: React.FC = () => {
                 </label>
                 <input
                   type="number"
-                  disabled={!canConfigurePayrollRules}
-                  value={payrollSettings?.standardDailyHours ?? 8}
-                  onChange={(e) =>
-                    updatePayrollSettings({
-                      standardDailyHours: Number(e.target.value) || 8,
-                    })
-                  }
+                  min={1}
+                  max={24}
+                  disabled={!canConfigurePayrollRules || isSavingPayrollSettings}
+                  value={settingsForm.standardDailyHours}
+                  onChange={(e) => {
+                    setHasUnsavedSettingsChanges(true);
+                    setSettingsFeedback(null);
+                    setSettingsForm((prev) => ({
+                      ...prev,
+                      standardDailyHours: e.target.value,
+                    }));
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
@@ -3438,16 +3655,19 @@ export const PayrollModule: React.FC = () => {
                 </label>
                 <input
                   type="number"
-                  disabled={!canConfigurePayrollRules}
-                  value={payrollSettings?.deductionRules?.pfEmployeeContributionPercent ?? 10}
-                  onChange={(e) =>
-                    updatePayrollSettings({
-                      deductionRules: {
-                        ...(payrollSettings?.deductionRules || {}),
-                        pfEmployeeContributionPercent: Number(e.target.value) || 10,
-                      },
-                    })
-                  }
+                  min={0}
+                  max={100}
+                  step="0.5"
+                  disabled={!canConfigurePayrollRules || isSavingPayrollSettings}
+                  value={settingsForm.pfEmployeeContributionPercent}
+                  onChange={(e) => {
+                    setHasUnsavedSettingsChanges(true);
+                    setSettingsFeedback(null);
+                    setSettingsForm((prev) => ({
+                      ...prev,
+                      pfEmployeeContributionPercent: e.target.value,
+                    }));
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
@@ -3466,9 +3686,16 @@ export const PayrollModule: React.FC = () => {
                 </label>
                 <input
                   type="time"
-                  disabled={!canConfigurePayrollRules}
-                  value={payrollSettings?.shiftStartTime || DEFAULT_SHIFT_START_TIME}
-                  onChange={(e) => updatePayrollSettings({ shiftStartTime: e.target.value })}
+                  disabled={!canConfigurePayrollRules || isSavingPayrollSettings}
+                  value={settingsForm.shiftStartTime}
+                  onChange={(e) => {
+                    setHasUnsavedSettingsChanges(true);
+                    setSettingsFeedback(null);
+                    setSettingsForm((prev) => ({
+                      ...prev,
+                      shiftStartTime: e.target.value,
+                    }));
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
@@ -3479,9 +3706,16 @@ export const PayrollModule: React.FC = () => {
                 </label>
                 <input
                   type="time"
-                  disabled={!canConfigurePayrollRules}
-                  value={payrollSettings?.shiftEndTime || DEFAULT_SHIFT_END_TIME}
-                  onChange={(e) => updatePayrollSettings({ shiftEndTime: e.target.value })}
+                  disabled={!canConfigurePayrollRules || isSavingPayrollSettings}
+                  value={settingsForm.shiftEndTime}
+                  onChange={(e) => {
+                    setHasUnsavedSettingsChanges(true);
+                    setSettingsFeedback(null);
+                    setSettingsForm((prev) => ({
+                      ...prev,
+                      shiftEndTime: e.target.value,
+                    }));
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
@@ -3494,11 +3728,16 @@ export const PayrollModule: React.FC = () => {
                   type="number"
                   min={0}
                   max={120}
-                  disabled={!canConfigurePayrollRules}
-                  value={payrollSettings?.lateGracePeriodMinutes ?? DEFAULT_GRACE_PERIOD_MINUTES}
-                  onChange={(e) =>
-                    updatePayrollSettings({ lateGracePeriodMinutes: Math.max(0, Number(e.target.value) || 0) })
-                  }
+                  disabled={!canConfigurePayrollRules || isSavingPayrollSettings}
+                  value={settingsForm.lateGracePeriodMinutes}
+                  onChange={(e) => {
+                    setHasUnsavedSettingsChanges(true);
+                    setSettingsFeedback(null);
+                    setSettingsForm((prev) => ({
+                      ...prev,
+                      lateGracePeriodMinutes: e.target.value,
+                    }));
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
@@ -3511,40 +3750,125 @@ export const PayrollModule: React.FC = () => {
                   type="number"
                   min={15}
                   max={500}
-                  disabled={!canConfigurePayrollRules}
-                  value={payrollSettings?.maxGpsAccuracyMeters ?? DEFAULT_MAX_GPS_ACCURACY_METERS}
-                  onChange={(e) =>
-                    updatePayrollSettings({ maxGpsAccuracyMeters: Math.max(15, Number(e.target.value) || 100) })
-                  }
+                  disabled={!canConfigurePayrollRules || isSavingPayrollSettings}
+                  value={settingsForm.maxGpsAccuracyMeters}
+                  onChange={(e) => {
+                    setHasUnsavedSettingsChanges(true);
+                    setSettingsFeedback(null);
+                    setSettingsForm((prev) => ({
+                      ...prev,
+                      maxGpsAccuracyMeters: e.target.value,
+                    }));
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold font-mono disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
             </div>
 
-            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
               <div>
-                {settingsSavedNotice && (
-                  <span className="text-xs font-bold text-emerald-600 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4" />
-                    Payroll, Shift & GPS settings saved.
+                {hasUnsavedSettingsChanges && canConfigurePayrollRules ? (
+                  <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                    Unsaved changes pending — click Save Payroll Rules to persist to Supabase.
                   </span>
-                )}
-                {!canConfigurePayrollRules && (
+                ) : !canConfigurePayrollRules ? (
                   <span className="text-xs font-semibold text-slate-500 flex items-center gap-1.5">
                     <Lock className="w-3.5 h-3.5" />
                     Read-only: Process Monthly Payroll or Approve Salary Sheet permission required to modify rules.
                   </span>
-                )}
+                ) : null}
               </div>
               {canConfigurePayrollRules && (
                 <button
-                  onClick={() => {
-                    setSettingsSavedNotice(true);
-                    setTimeout(() => setSettingsSavedNotice(false), 3000);
+                  type="button"
+                  disabled={isSavingPayrollSettings}
+                  onClick={async () => {
+                    const workingDays = Math.min(
+                      31,
+                      Math.max(1, Math.round(Number(settingsForm.standardWorkingDaysPerMonth) || 26))
+                    );
+                    const dailyHours = Math.min(
+                      24,
+                      Math.max(1, Math.round(Number(settingsForm.standardDailyHours) || 8))
+                    );
+                    const pfRaw = settingsForm.pfEmployeeContributionPercent.trim();
+                    const parsedPf = pfRaw === '' ? 10 : Number(pfRaw);
+                    const pfPercent = Number.isFinite(parsedPf)
+                      ? Math.min(100, Math.max(0, parsedPf))
+                      : 10;
+                    const graceRaw = settingsForm.lateGracePeriodMinutes.trim();
+                    const parsedGrace = graceRaw === '' ? DEFAULT_GRACE_PERIOD_MINUTES : Number(graceRaw);
+                    const graceMinutes = Number.isFinite(parsedGrace)
+                      ? Math.min(120, Math.max(0, Math.round(parsedGrace)))
+                      : DEFAULT_GRACE_PERIOD_MINUTES;
+                    const gpsRaw = settingsForm.maxGpsAccuracyMeters.trim();
+                    const parsedGps = gpsRaw === '' ? DEFAULT_MAX_GPS_ACCURACY_METERS : Number(gpsRaw);
+                    const maxGpsMeters = Number.isFinite(parsedGps)
+                      ? Math.min(500, Math.max(15, Math.round(parsedGps)))
+                      : DEFAULT_MAX_GPS_ACCURACY_METERS;
+                    const shiftStartTime = settingsForm.shiftStartTime || DEFAULT_SHIFT_START_TIME;
+                    const shiftEndTime = settingsForm.shiftEndTime || DEFAULT_SHIFT_END_TIME;
+
+                    setIsSavingPayrollSettings(true);
+                    setSettingsFeedback(null);
+                    const result = await updatePayrollSettings({
+                      standardWorkingDaysPerMonth: workingDays,
+                      standardDailyHours: dailyHours,
+                      deductionRules: {
+                        ...(payrollSettings?.deductionRules || {}),
+                        pfEmployeeContributionPercent: pfPercent,
+                      },
+                      shiftStartTime,
+                      shiftEndTime,
+                      lateGracePeriodMinutes: graceMinutes,
+                      maxGpsAccuracyMeters: maxGpsMeters,
+                    });
+                    setIsSavingPayrollSettings(false);
+
+                    if (!result.success) {
+                      setSettingsFeedback({
+                        type: 'error',
+                        message: result.error || 'Failed to update payroll rules.',
+                      });
+                      return;
+                    }
+
+                    setSettingsForm({
+                      standardWorkingDaysPerMonth: String(workingDays),
+                      standardDailyHours: String(dailyHours),
+                      pfEmployeeContributionPercent: String(pfPercent),
+                      shiftStartTime,
+                      shiftEndTime,
+                      lateGracePeriodMinutes: String(graceMinutes),
+                      maxGpsAccuracyMeters: String(maxGpsMeters),
+                    });
+                    setHasUnsavedSettingsChanges(false);
+
+                    if (result.dbSynced) {
+                      setSettingsFeedback({
+                        type: 'success',
+                        message: 'Corporate Payroll Configuration & Statutory Rules saved to Supabase.',
+                      });
+                    } else {
+                      setSettingsFeedback({
+                        type: 'warning',
+                        message:
+                          result.error ||
+                          'Updated locally, but Supabase did not persist to public.payroll_settings.',
+                        sqlFix: result.sqlFix || PAYROLL_SETTINGS_TABLE_SQL,
+                      });
+                    }
                   }}
-                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs"
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-bold text-xs shadow-xs flex items-center gap-1.5"
                 >
-                  Save Payroll Rules
+                  {isSavingPayrollSettings ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving to Supabase...</span>
+                    </>
+                  ) : (
+                    <span>Save Payroll Rules</span>
+                  )}
                 </button>
               )}
             </div>

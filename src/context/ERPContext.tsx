@@ -216,6 +216,8 @@ import {
   SalaryPaymentMethod,
   SalaryStructuresDbStatus,
   SALARY_STRUCTURES_TABLE_SQL,
+  PayrollSettingsDbStatus,
+  PAYROLL_SETTINGS_TABLE_SQL,
 } from '../types/payroll.ts';
 import {
   DEFAULT_OFFICE_LOCATIONS,
@@ -838,7 +840,24 @@ interface ERPContextType {
   recordSalaryPayment: (arg1: any, arg2?: any, arg3?: any) => void;
 
   payrollSettings: PayrollSettings;
-  updatePayrollSettings: (settings: Partial<PayrollSettings>) => void;
+  payrollSettingsDbStatus: PayrollSettingsDbStatus;
+  refreshPayrollSettings: () => Promise<void>;
+  syncPayrollSettingsToSupabase: () => Promise<{
+    success: boolean;
+    dbSynced: boolean;
+    backedUp?: boolean;
+    error?: string;
+    sqlFix?: string;
+    dbStatus?: PayrollSettingsDbStatus;
+  }>;
+  updatePayrollSettings: (settings: Partial<PayrollSettings>) => Promise<{
+    success: boolean;
+    dbSynced: boolean;
+    backedUp?: boolean;
+    error?: string;
+    sqlFix?: string;
+    dbStatus?: PayrollSettingsDbStatus;
+  }>;
 
   // Audit Logs
   auditLogs: AuditLog[];
@@ -2498,11 +2517,22 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [payrollSettings, setPayrollSettings] = useState<PayrollSettings>(() => ({
     ...DEFAULT_PAYROLL_SETTINGS,
+    shiftStartTime: DEFAULT_PAYROLL_SETTINGS.shiftStartTime || DEFAULT_SHIFT_START_TIME,
+    shiftEndTime: DEFAULT_PAYROLL_SETTINGS.shiftEndTime || DEFAULT_SHIFT_END_TIME,
+    lateGracePeriodMinutes: DEFAULT_PAYROLL_SETTINGS.lateGracePeriodMinutes ?? DEFAULT_GRACE_PERIOD_MINUTES,
+    maxGpsAccuracyMeters: DEFAULT_PAYROLL_SETTINGS.maxGpsAccuracyMeters ?? DEFAULT_MAX_GPS_ACCURACY_METERS,
     leaveQuotas: { ...(DEFAULT_PAYROLL_SETTINGS.leaveQuotas || { annualLeave: 14, casualLeave: 10, sickLeave: 14, maternityLeave: 112 }) },
     overtimeConfig: { ...(DEFAULT_PAYROLL_SETTINGS.overtimeConfig || { hourlyRateMultiplier: 1.5 }) },
     deductionRules: { ...(DEFAULT_PAYROLL_SETTINGS.deductionRules || {}) },
     salaryComponents: { ...(DEFAULT_PAYROLL_SETTINGS.salaryComponents || {}) },
   }));
+
+  const [payrollSettingsDbStatus, setPayrollSettingsDbStatus] = useState<PayrollSettingsDbStatus>({
+    synced: false,
+    status: 'unknown',
+    error: null,
+    sqlFix: null,
+  });
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -4356,6 +4386,266 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     } catch (err: any) {
       setSalaryStructuresDbStatus(classifySalaryStructuresSupabaseError(err));
+    }
+  };
+
+  const classifyPayrollSettingsSupabaseError = (err: any): PayrollSettingsDbStatus => {
+    const code = String(err?.code || '').trim();
+    const message = String(err?.message || '').trim();
+    const lower = message.toLowerCase();
+    if (
+      code === 'PGRST205' ||
+      code === '42P01' ||
+      lower.includes('could not find the table') ||
+      lower.includes('does not exist')
+    ) {
+      return {
+        synced: false,
+        status: 'table_missing',
+        error: 'Supabase table "public.payroll_settings" does not exist yet.',
+        sqlFix: PAYROLL_SETTINGS_TABLE_SQL,
+      };
+    }
+    if (
+      code === '42501' ||
+      lower.includes('row-level security') ||
+      lower.includes('permission denied')
+    ) {
+      return {
+        synced: false,
+        status: 'rls_blocked',
+        error: `Supabase Row-Level Security blocked saving to "public.payroll_settings": ${message}`,
+        sqlFix: PAYROLL_SETTINGS_TABLE_SQL,
+      };
+    }
+    return {
+      synced: false,
+      status: 'error',
+      error: message || 'Failed to communicate with Supabase payroll_settings table.',
+      sqlFix: PAYROLL_SETTINGS_TABLE_SQL,
+    };
+  };
+
+  const mergePayrollSettings = (
+    prev: PayrollSettings,
+    partial: Partial<PayrollSettings>
+  ): PayrollSettings => {
+    const baseOvertime = prev?.overtimeConfig || DEFAULT_PAYROLL_SETTINGS.overtimeConfig || { hourlyRateMultiplier: 1.5 };
+    const baseLeave = prev?.leaveQuotas || DEFAULT_PAYROLL_SETTINGS.leaveQuotas || {
+      annualLeave: 14,
+      casualLeave: 10,
+      sickLeave: 14,
+      maternityLeave: 112,
+    };
+    const nextWorkingDays =
+      partial.standardWorkingDaysPerMonth ??
+      partial.workingDaysPerMonth ??
+      prev.standardWorkingDaysPerMonth ??
+      prev.workingDaysPerMonth ??
+      26;
+    const nextDailyHours =
+      partial.standardDailyHours ??
+      partial.standardWorkHoursPerDay ??
+      prev.standardDailyHours ??
+      prev.standardWorkHoursPerDay ??
+      8;
+    const nextMultiplier =
+      partial.overtimeConfig?.hourlyRateMultiplier ??
+      partial.overtimeHourlyMultiplier ??
+      baseOvertime.hourlyRateMultiplier ??
+      1.5;
+
+    return {
+      ...prev,
+      ...partial,
+      workingDaysPerMonth: nextWorkingDays,
+      standardWorkingDaysPerMonth: nextWorkingDays,
+      standardWorkHoursPerDay: nextDailyHours,
+      standardDailyHours: nextDailyHours,
+      overtimeHourlyMultiplier: nextMultiplier,
+      shiftStartTime: partial.shiftStartTime ?? prev.shiftStartTime ?? DEFAULT_SHIFT_START_TIME,
+      shiftEndTime: partial.shiftEndTime ?? prev.shiftEndTime ?? DEFAULT_SHIFT_END_TIME,
+      lateGracePeriodMinutes:
+        partial.lateGracePeriodMinutes ?? prev.lateGracePeriodMinutes ?? DEFAULT_GRACE_PERIOD_MINUTES,
+      maxGpsAccuracyMeters:
+        partial.maxGpsAccuracyMeters ?? prev.maxGpsAccuracyMeters ?? DEFAULT_MAX_GPS_ACCURACY_METERS,
+      overtimeConfig: {
+        hourlyRateMultiplier: nextMultiplier,
+      },
+      leaveQuotas: {
+        annualLeave: partial.leaveQuotas?.annualLeave ?? baseLeave.annualLeave,
+        casualLeave: partial.leaveQuotas?.casualLeave ?? baseLeave.casualLeave,
+        sickLeave: partial.leaveQuotas?.sickLeave ?? baseLeave.sickLeave,
+        maternityLeave: partial.leaveQuotas?.maternityLeave ?? baseLeave.maternityLeave,
+      },
+      deductionRules: {
+        ...(prev?.deductionRules || DEFAULT_PAYROLL_SETTINGS.deductionRules || {}),
+        ...(partial.deductionRules || {}),
+      },
+      salaryComponents: {
+        ...(prev?.salaryComponents || DEFAULT_PAYROLL_SETTINGS.salaryComponents || {}),
+        ...(partial.salaryComponents || {}),
+      },
+    };
+  };
+
+  const mapPayrollSettingsRow = (data: any): Partial<PayrollSettings> => {
+    const rawDeductionObj =
+      data?.deduction_rules && typeof data.deduction_rules === 'object'
+        ? { ...data.deduction_rules }
+        : {};
+    const {
+      shiftStartTime: jsonShiftStart,
+      shiftEndTime: jsonShiftEnd,
+      lateGracePeriodMinutes: jsonGrace,
+      maxGpsAccuracyMeters: jsonMaxGps,
+      lateDaysForOneDayAbsent: jsonLateDays,
+      companyName: jsonCompanyName,
+      companyAddress: jsonCompanyAddress,
+      defaultBankAccountId: jsonDefaultBankId,
+      autoPostAccountingJournal: jsonAutoPost,
+      updatedBy: jsonUpdatedBy,
+      ...cleanDeductionRules
+    } = rawDeductionObj as Record<string, any>;
+
+    const remoteWorkingDays = Number(data?.standard_working_days_per_month) || 26;
+    const remoteDailyHours = Number(data?.standard_daily_hours) || 8;
+    const remoteOvertime =
+      data?.overtime_config && typeof data.overtime_config === 'object'
+        ? data.overtime_config
+        : {};
+    const remoteLeaves =
+      data?.leave_quotas && typeof data.leave_quotas === 'object' ? data.leave_quotas : {};
+    const remoteSalaryComp =
+      data?.salary_components && typeof data.salary_components === 'object'
+        ? data.salary_components
+        : {};
+
+    return {
+      standardWorkingDaysPerMonth: remoteWorkingDays,
+      workingDaysPerMonth: remoteWorkingDays,
+      standardDailyHours: remoteDailyHours,
+      standardWorkHoursPerDay: remoteDailyHours,
+      overtimeConfig: {
+        hourlyRateMultiplier: Number(remoteOvertime.hourlyRateMultiplier) || 1.5,
+      },
+      leaveQuotas: {
+        annualLeave: Number(remoteLeaves.annualLeave ?? 14),
+        casualLeave: Number(remoteLeaves.casualLeave ?? 10),
+        sickLeave: Number(remoteLeaves.sickLeave ?? 14),
+        maternityLeave: Number(remoteLeaves.maternityLeave ?? 112),
+      },
+      deductionRules: cleanDeductionRules,
+      salaryComponents: remoteSalaryComp,
+      shiftStartTime: data?.shift_start_time || jsonShiftStart || DEFAULT_SHIFT_START_TIME,
+      shiftEndTime: data?.shift_end_time || jsonShiftEnd || DEFAULT_SHIFT_END_TIME,
+      lateGracePeriodMinutes:
+        data?.late_grace_period_minutes !== null && data?.late_grace_period_minutes !== undefined
+          ? Number(data.late_grace_period_minutes)
+          : jsonGrace !== undefined
+          ? Number(jsonGrace)
+          : DEFAULT_GRACE_PERIOD_MINUTES,
+      maxGpsAccuracyMeters:
+        data?.max_gps_accuracy_meters !== null && data?.max_gps_accuracy_meters !== undefined
+          ? Number(data.max_gps_accuracy_meters)
+          : jsonMaxGps !== undefined
+          ? Number(jsonMaxGps)
+          : DEFAULT_MAX_GPS_ACCURACY_METERS,
+      lateDaysForOneDayAbsent:
+        jsonLateDays !== undefined ? Number(jsonLateDays) : undefined,
+      companyName: jsonCompanyName !== undefined ? String(jsonCompanyName) : undefined,
+      companyAddress: jsonCompanyAddress !== undefined ? String(jsonCompanyAddress) : undefined,
+      defaultBankAccountId:
+        jsonDefaultBankId !== undefined ? String(jsonDefaultBankId) : undefined,
+      autoPostAccountingJournal:
+        jsonAutoPost !== undefined ? Boolean(jsonAutoPost) : undefined,
+      updatedAt: data?.updated_at ? String(data.updated_at) : undefined,
+      updatedBy: data?.updated_by || jsonUpdatedBy || undefined,
+    };
+  };
+
+  const refreshPayrollSettings = async () => {
+    const sb = getSupabase();
+    if (!sb) {
+      setPayrollSettingsDbStatus({
+        synced: false,
+        status: 'not_configured',
+        error: 'Supabase client is not configured.',
+        sqlFix: null,
+      });
+      return;
+    }
+    try {
+      const [primaryRes, fallbackRes] = await Promise.all([
+        sb.from('payroll_settings').select('*').eq('id', 'default').maybeSingle(),
+        sb
+          .from('system_settings')
+          .select('id, settings_json, updated_at, updated_by')
+          .eq('id', 'payroll_settings')
+          .maybeSingle(),
+      ]);
+
+      const primaryRow = !primaryRes.error ? primaryRes.data : null;
+      const fallbackRaw = !fallbackRes.error ? fallbackRes.data : null;
+      const fallbackPayroll =
+        fallbackRaw?.settings_json &&
+        typeof fallbackRaw.settings_json === 'object' &&
+        (fallbackRaw.settings_json as any).payrollSettings &&
+        typeof (fallbackRaw.settings_json as any).payrollSettings === 'object'
+          ? {
+              ...((fallbackRaw.settings_json as any).payrollSettings as Partial<PayrollSettings>),
+              updatedAt:
+                (fallbackRaw.settings_json as any).payrollSettings.updatedAt ||
+                (fallbackRaw.updated_at ? String(fallbackRaw.updated_at) : undefined),
+              updatedBy:
+                (fallbackRaw.settings_json as any).payrollSettings.updatedBy ||
+                fallbackRaw.updated_by ||
+                undefined,
+            }
+          : null;
+
+      if (primaryRes.error && fallbackRes.error) {
+        setPayrollSettingsDbStatus(classifyPayrollSettingsSupabaseError(primaryRes.error));
+        return;
+      }
+
+      const primaryMapped = primaryRow ? mapPayrollSettingsRow(primaryRow) : null;
+      let chosen: Partial<PayrollSettings> | null = null;
+
+      if (primaryMapped && fallbackPayroll) {
+        const primaryTime = primaryMapped.updatedAt ? Date.parse(primaryMapped.updatedAt) : 0;
+        const fallbackTime = fallbackPayroll.updatedAt ? Date.parse(fallbackPayroll.updatedAt) : 0;
+        chosen = fallbackTime > primaryTime ? fallbackPayroll : primaryMapped;
+      } else {
+        chosen = fallbackPayroll || primaryMapped;
+      }
+
+      if (chosen) {
+        const hydrated = mergePayrollSettings(payrollSettings, chosen);
+        setPayrollSettings(hydrated);
+
+        // If public.payroll_settings has no row yet or is behind backup, attempt syncing directly into public.payroll_settings
+        const primaryTime = primaryMapped?.updatedAt ? Date.parse(primaryMapped.updatedAt) : 0;
+        const chosenTime = chosen.updatedAt ? Date.parse(chosen.updatedAt) : 0;
+        if (!primaryRow || chosenTime > primaryTime) {
+          await persistPayrollSettingsToSupabase(hydrated);
+          return;
+        }
+      }
+
+      if (primaryRes.error) {
+        setPayrollSettingsDbStatus(classifyPayrollSettingsSupabaseError(primaryRes.error));
+        return;
+      }
+
+      setPayrollSettingsDbStatus({
+        synced: true,
+        status: 'synced',
+        error: null,
+        sqlFix: null,
+      });
+    } catch (err: any) {
+      setPayrollSettingsDbStatus(classifyPayrollSettingsSupabaseError(err));
     }
   };
 
@@ -6337,6 +6627,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       refreshUOMs(),
       refreshFieldForce(),
       refreshSalaryStructures(),
+      refreshPayrollSettings(),
       refreshOfficeLocations(),
       refreshAttendanceData(),
       refreshOvertimeData(),
@@ -22156,41 +22447,232 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const updatePayrollSettings = (newSettings: Partial<PayrollSettings>) => {
+  const persistPayrollSettingsToSupabase = async (
+    settings: PayrollSettings
+  ): Promise<{
+    dbSynced: boolean;
+    backedUp?: boolean;
+    error?: string;
+    sqlFix?: string;
+    dbStatus: PayrollSettingsDbStatus;
+  }> => {
+    const sb = getSupabase();
+    if (!sb) {
+      const notCfgStatus: PayrollSettingsDbStatus = {
+        synced: false,
+        status: 'not_configured',
+        error: 'Supabase client is not configured.',
+        sqlFix: null,
+      };
+      setPayrollSettingsDbStatus(notCfgStatus);
+      return { dbSynced: false, error: notCfgStatus.error || undefined, dbStatus: notCfgStatus };
+    }
+
+    const actorName = settings.updatedBy || currentUser?.name || 'Admin';
+    const updatedAt = settings.updatedAt || new Date().toISOString();
+    const upsertPayload: Record<string, any> = {
+      id: 'default',
+      standard_working_days_per_month: Math.max(1, Number(settings.standardWorkingDaysPerMonth) || 26),
+      standard_daily_hours: Math.max(1, Number(settings.standardDailyHours) || 8),
+      overtime_config: settings.overtimeConfig || { hourlyRateMultiplier: 1.5 },
+      leave_quotas: settings.leaveQuotas || {
+        annualLeave: 14,
+        casualLeave: 10,
+        sickLeave: 14,
+        maternityLeave: 112,
+      },
+      deduction_rules: {
+        ...(settings.deductionRules || {}),
+        shiftStartTime: settings.shiftStartTime || DEFAULT_SHIFT_START_TIME,
+        shiftEndTime: settings.shiftEndTime || DEFAULT_SHIFT_END_TIME,
+        lateGracePeriodMinutes: Math.max(0, Number(settings.lateGracePeriodMinutes ?? DEFAULT_GRACE_PERIOD_MINUTES)),
+        maxGpsAccuracyMeters: Math.max(15, Number(settings.maxGpsAccuracyMeters ?? DEFAULT_MAX_GPS_ACCURACY_METERS)),
+        lateDaysForOneDayAbsent: Number(settings.lateDaysForOneDayAbsent ?? 3),
+        companyName: settings.companyName ?? '',
+        companyAddress: settings.companyAddress ?? '',
+        defaultBankAccountId: settings.defaultBankAccountId ?? '',
+        autoPostAccountingJournal: settings.autoPostAccountingJournal ?? true,
+        updatedBy: actorName,
+      },
+      salary_components: settings.salaryComponents || {
+        houseRentPercent: 50,
+        medicalAllowancePercent: 10,
+      },
+      shift_start_time: settings.shiftStartTime || DEFAULT_SHIFT_START_TIME,
+      shift_end_time: settings.shiftEndTime || DEFAULT_SHIFT_END_TIME,
+      late_grace_period_minutes: Math.max(
+        0,
+        Number(settings.lateGracePeriodMinutes ?? DEFAULT_GRACE_PERIOD_MINUTES)
+      ),
+      max_gps_accuracy_meters: Math.max(
+        15,
+        Number(settings.maxGpsAccuracyMeters ?? DEFAULT_MAX_GPS_ACCURACY_METERS)
+      ),
+      updated_by: actorName,
+      updated_at: updatedAt,
+    };
+
+    try {
+      let lastError: any = null;
+      const workingPayload: Record<string, any> = { ...upsertPayload };
+
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const { error } = await sb
+          .from('payroll_settings')
+          .upsert(workingPayload, { onConflict: 'id' });
+
+        if (!error) {
+          const okStatus: PayrollSettingsDbStatus = {
+            synced: true,
+            status: 'synced',
+            error: null,
+            sqlFix: null,
+          };
+          setPayrollSettingsDbStatus(okStatus);
+          return { dbSynced: true, backedUp: false, dbStatus: okStatus };
+        }
+
+        lastError = error;
+        const msg = String(error.message || '');
+        let missingCol: string | null = null;
+        if (error.code === 'PGRST204' || msg.includes('schema cache')) {
+          missingCol = msg.match(/Could not find the '([^']+)' column/i)?.[1] || null;
+        } else if (error.code === '42703' || msg.toLowerCase().includes('does not exist')) {
+          missingCol =
+            msg.match(/column\s+"([^"]+)"/i)?.[1] ||
+            msg.match(/column\s+(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)/i)?.[1] ||
+            null;
+        }
+        if (missingCol && Object.prototype.hasOwnProperty.call(workingPayload, missingCol)) {
+          delete workingPayload[missingCol];
+          continue;
+        }
+        break;
+      }
+
+      const primaryStatus = classifyPayrollSettingsSupabaseError(lastError);
+      let backedUp = false;
+      if (
+        primaryStatus.status === 'rls_blocked' ||
+        primaryStatus.status === 'table_missing' ||
+        primaryStatus.status === 'error'
+      ) {
+        const { error: fallbackError } = await sb.from('system_settings').upsert(
+          {
+            id: 'payroll_settings',
+            software_name: 'Payroll Settings',
+            logo_data_url: null,
+            branding_json: { type: 'payroll_settings' },
+            settings_json: { payrollSettings: settings },
+            updated_by: actorName,
+            updated_at: updatedAt,
+          },
+          { onConflict: 'id' }
+        );
+        backedUp = !fallbackError;
+      }
+
+      setPayrollSettingsDbStatus(primaryStatus);
+      console.warn('[PayrollSettings] public.payroll_settings write blocked; SQL policy required:', lastError);
+      return {
+        dbSynced: false,
+        backedUp,
+        error: backedUp
+          ? `Backed up in system_settings, but Supabase Row-Level Security blocked writing directly to "public.payroll_settings". Run the SQL fix below once in Supabase SQL Editor, then click Sync to Supabase.`
+          : primaryStatus.error || lastError?.message || 'Failed to save payroll settings to Supabase.',
+        sqlFix: primaryStatus.sqlFix || PAYROLL_SETTINGS_TABLE_SQL,
+        dbStatus: primaryStatus,
+      };
+    } catch (err: any) {
+      const failStatus = classifyPayrollSettingsSupabaseError(err);
+      setPayrollSettingsDbStatus(failStatus);
+      console.warn('[PayrollSettings] Supabase save exception:', err);
+      return {
+        dbSynced: false,
+        backedUp: false,
+        error: failStatus.error || err?.message || 'Network error while saving payroll settings.',
+        sqlFix: failStatus.sqlFix || PAYROLL_SETTINGS_TABLE_SQL,
+        dbStatus: failStatus,
+      };
+    }
+  };
+
+  const updatePayrollSettings = async (
+    newSettings: Partial<PayrollSettings>
+  ): Promise<{
+    success: boolean;
+    dbSynced: boolean;
+    backedUp?: boolean;
+    error?: string;
+    sqlFix?: string;
+    dbStatus?: PayrollSettingsDbStatus;
+  }> => {
     if (
       !hasPageAction(currentUser, 'payroll', 'create_payroll') &&
       !hasPageAction(currentUser, 'payroll', 'approve_payroll')
     ) {
       console.warn('Permission denied: create_payroll or approve_payroll required to update payroll settings.');
       addAuditLog('PERMISSION_DENIED', 'HR & Payroll', `${currentUser?.name || 'User'} attempted to modify payroll settings without permission`);
-      return;
-    }
-    setPayrollSettings((prev) => {
-      const baseOvertime = prev?.overtimeConfig || DEFAULT_PAYROLL_SETTINGS.overtimeConfig || { hourlyRateMultiplier: 1.5 };
-      const baseLeave = prev?.leaveQuotas || DEFAULT_PAYROLL_SETTINGS.leaveQuotas || { annualLeave: 14, casualLeave: 10, sickLeave: 14, maternityLeave: 112 };
       return {
-        ...prev,
-        ...newSettings,
-        overtimeConfig: {
-          hourlyRateMultiplier: newSettings.overtimeConfig?.hourlyRateMultiplier ?? baseOvertime.hourlyRateMultiplier,
-        },
-        leaveQuotas: {
-          annualLeave: newSettings.leaveQuotas?.annualLeave ?? baseLeave.annualLeave,
-          casualLeave: newSettings.leaveQuotas?.casualLeave ?? baseLeave.casualLeave,
-          sickLeave: newSettings.leaveQuotas?.sickLeave ?? baseLeave.sickLeave,
-          maternityLeave: newSettings.leaveQuotas?.maternityLeave ?? baseLeave.maternityLeave,
-        },
-        deductionRules: {
-          ...(prev?.deductionRules || DEFAULT_PAYROLL_SETTINGS.deductionRules || {}),
-          ...(newSettings.deductionRules || {}),
-        },
-        salaryComponents: {
-          ...(prev?.salaryComponents || DEFAULT_PAYROLL_SETTINGS.salaryComponents || {}),
-          ...(newSettings.salaryComponents || {}),
-        },
+        success: false,
+        dbSynced: false,
+        error: 'Permission denied: Process Monthly Payroll or Approve Salary Sheet permission required.',
       };
+    }
+
+    const nowIso = new Date().toISOString();
+    const actorName = currentUser?.name || 'Admin';
+    const nextSettings = mergePayrollSettings(payrollSettings, {
+      ...newSettings,
+      updatedAt: nowIso,
+      updatedBy: actorName,
     });
+
+    setPayrollSettings(nextSettings);
+    const persistResult = await persistPayrollSettingsToSupabase(nextSettings);
     addAuditLog('PAYROLL_SETTINGS_UPDATED', 'HR & Payroll', 'Updated corporate payroll configuration & rules');
+
+    return {
+      success: true,
+      dbSynced: persistResult.dbSynced,
+      backedUp: persistResult.backedUp,
+      error: persistResult.error,
+      sqlFix: persistResult.sqlFix,
+      dbStatus: persistResult.dbStatus,
+    };
+  };
+
+  const syncPayrollSettingsToSupabase = async (): Promise<{
+    success: boolean;
+    dbSynced: boolean;
+    backedUp?: boolean;
+    error?: string;
+    sqlFix?: string;
+    dbStatus?: PayrollSettingsDbStatus;
+  }> => {
+    if (
+      !hasPageAction(currentUser, 'payroll', 'create_payroll') &&
+      !hasPageAction(currentUser, 'payroll', 'approve_payroll')
+    ) {
+      return {
+        success: false,
+        dbSynced: false,
+        error: 'Permission denied: Process Monthly Payroll or Approve Salary Sheet permission required.',
+      };
+    }
+    const persistResult = await persistPayrollSettingsToSupabase({
+      ...payrollSettings,
+      updatedAt: payrollSettings.updatedAt || new Date().toISOString(),
+      updatedBy: payrollSettings.updatedBy || currentUser?.name || 'Admin',
+    });
+    return {
+      success: persistResult.dbSynced,
+      dbSynced: persistResult.dbSynced,
+      backedUp: persistResult.backedUp,
+      error: persistResult.error,
+      sqlFix: persistResult.sqlFix,
+      dbStatus: persistResult.dbStatus,
+    };
   };
 
   const updateSystemBranding = useCallback(
@@ -22764,6 +23246,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         finalizeMonthlyPayrollRun,
         deleteMonthlyPayrollRun,
         recordSalaryPayment,
+        payrollSettingsDbStatus,
+        refreshPayrollSettings,
+        syncPayrollSettingsToSupabase,
         updatePayrollSettings,
       }}
     >
